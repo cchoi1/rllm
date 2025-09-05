@@ -177,6 +177,7 @@ cython_debug/
 **/outputs/
 **/wandb/
 **/checkpoints/
+**/trajectories/
 
 # Ignore parquet files.
 data/* 
@@ -198,3 +199,48 @@ rllm/data/train/code/livecodebench.json
 rllm/data/train/code/kodcode.json
 rllm/data/train/code/primeintellect.json
 rllm/data/train/code/primeintellect_dedupe.json
+# large artifacts
+*.pt
+*.bin
+*.tar
+*.ckpt
+*.parquet
+*.mp4
+*.pkl
+
+# large artifacts
+*.pt
+*.bin
+*.ckpt
+*.tar
+*.zip
+*.parquet
+*.mp4
+*.pkl
+outputs/
+checkpoints/
+wandb/
+data/
+.cache/
+# generated
+.hydra/
+*.pt
+*.bin
+*.ckpt
+*.npz
+*.npy
+*.tar
+*.tar.gz
+*.zip
+outputs/
+checkpoints/
+data/
+# more generated/data
+trajectories/
+checkpoints/
+rllm/data/
+*.parquet
+*.parquet.backup
+*.log
+core
+core.*
