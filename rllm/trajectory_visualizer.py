@@ -6,7 +6,7 @@ import torch
 from fire import Fire
 
 
-def main(trajectory_file: str = "./trajectories/sample_trajectories/search_trajectories.pt", server_port: int = 12345):
+def main(trajectory_file: str = "./trajectories/deepcoder_multiturn_trajectories_20250904_104041.pt", server_port: int = 23457):
     trajs_data = torch.load(trajectory_file, weights_only=False)
     all_trajs = list(filter(lambda x: hasattr(x, "steps") and len(x.steps) > 0, trajs_data))
 
@@ -28,11 +28,14 @@ def main(trajectory_file: str = "./trajectories/sample_trajectories/search_traje
         if not model_response:
             return "", ""
 
+        # Look for <think>...</think> pattern
         think_match = re.search(r"<think>(.*?)</think>", model_response, re.DOTALL)
         if think_match:
             thinking = think_match.group(1).strip()
+            # Get everything after the last </think> token
             response = model_response.split("</think>", 1)[-1].strip()
         else:
+            # No thinking tokens found
             thinking = ""
             response = model_response.strip()
 
@@ -235,18 +238,39 @@ def main(trajectory_file: str = "./trajectories/sample_trajectories/search_traje
         question_text = f"**Question:**\n{question}\n\n**Ground Truth Answer:** `{ground_truth}`"
 
         if num_steps == 0:
-            return (position_text, metadata_text, perf_text, question_text, empty_content, empty_content, empty_content, empty_content, empty_content, empty_content)
+            return (position_text, metadata_text, perf_text, question_text, empty_content, empty_content, empty_content, empty_content, empty_content, empty_content, empty_content, empty_content, empty_content, empty_content)
 
         step = trajectory.steps[step_idx]
         structure = detect_response_structure(step)
+        # print("EXTRAS: ", step.extras)
 
         if structure["uses_thinking_format"]:
             thinking_text = getattr(step, "thought", "") or "*No thinking recorded*"
             response_text = getattr(step, "action", "") or "*No response recorded*"
         else:
-            thinking, response = extract_thinking_and_response(getattr(step, "model_response", ""))
+            # Always try to extract thinking and response from model_response first
+            model_response = getattr(step, "model_response", "")
+            thinking, response = extract_thinking_and_response(model_response)
+            
+            # Debug: print what was extracted
+            print(f"DEBUG - Model response: {model_response[:200]}...")
+            print(f"DEBUG - Thinking extracted: {thinking[:100] if thinking else 'None'}...")
+            print(f"DEBUG - Response extracted: {response[:100] if response else 'None'}...")
+            
+            # Set thinking text
             thinking_text = thinking if thinking else "*No thinking recorded*"
-            response_text = response if response else (getattr(step, "action", "") or "*No response recorded*")
+            
+            # For response text, prioritize everything after </think> token
+            if response and response.strip():
+                response_text = response
+                print(f"DEBUG - Using extracted response: {response_text[:100]}...")
+            elif hasattr(step, "action") and step.action:
+                # Fallback to action field if no response extracted from model_response
+                response_text = str(step.action)
+                print(f"DEBUG - Using action fallback: {response_text[:100]}...")
+            else:
+                response_text = "*No response recorded*"
+                print("DEBUG - No response found")
 
         # Safe field access for step performance
         step_reward = getattr(step, "reward", 0.0)
@@ -266,7 +290,10 @@ def main(trajectory_file: str = "./trajectories/sample_trajectories/search_traje
             if task_type == "search" and isinstance(step_action, list):
                 actions_text = "\n\n".join([format_tool_call_detailed(tc) for tc in step_action])
             elif task_type in ["code", "math"] and isinstance(step_action, str):
-                actions_text = f"**Generated {'Code' if task_type == 'code' else 'Solution'}:**\n```\n{step_action}\n```"
+                # Clean any thinking tokens from the action text
+                cleaned_action = re.sub(r'<think>.*?</think>', '', str(step_action), flags=re.DOTALL)
+                cleaned_action = cleaned_action.strip()
+                actions_text = f"**Generated {'Code' if task_type == 'code' else 'Solution'}:**\n```\n{cleaned_action}\n```"
             else:
                 actions_text = format_tool_call_detailed(step_action) if isinstance(step_action, dict) else str(step_action)
 
@@ -318,7 +345,9 @@ def main(trajectory_file: str = "./trajectories/sample_trajectories/search_traje
                         pass
         elif task_type in ["code", "math"]:
             if step_done and step_action:
-                predicted_answer = step_action
+                # Clean any thinking tokens from the predicted answer
+                predicted_answer = re.sub(r'<think>.*?</think>', '', str(step_action), flags=re.DOTALL)
+                predicted_answer = predicted_answer.strip()
                 has_finish_action = True
 
         if has_finish_action:
@@ -348,7 +377,50 @@ def main(trajectory_file: str = "./trajectories/sample_trajectories/search_traje
                 final_answer_text += f"**Ground Truth:** `{ground_truth}`\n"
                 final_answer_text += f"**Status:** Step {step_idx + 1}/{num_steps} - {'No finish action' if task_type == 'search' else 'Continuing...'}"
 
-        return (position_text, metadata_text, perf_text, question_text, thinking_text, response_text, step_perf_text, actions_text, outputs_text, final_answer_text)
+        # Extract solver information from step extras
+        solver_prompt_text = empty_content
+        solver_code_text = empty_content
+        solver_results_text = empty_content
+        context_manager_prompt_text = empty_content
+        
+        if hasattr(step, 'extras') and isinstance(step.extras, dict):
+            extras = step.extras
+            solver_prompt = extras.get("solver_prompt", "")
+            solver_code = extras.get("solver_code", "")
+            solver_full_output = extras.get("solver_full_output", "")
+            verifier_results = extras.get("verifier_results", "")
+            passed_tests = extras.get("passed_tests", 0)
+            total_tests = extras.get("total_tests", 0)
+            solved = extras.get("solved", False)
+            context_manager_prompt = extras.get("context_manager_prompt", "")
+            
+            if solver_prompt:
+                solver_prompt_text = f"**🤖 Solver Prompt:**\n```\n{solver_prompt}\n```"
+            
+            if solver_code:
+                # Clean any thinking tokens from solver code
+                cleaned_code = re.sub(r'<think>.*?</think>', '', str(solver_code), flags=re.DOTALL)
+                cleaned_code = cleaned_code.strip()
+                solver_code_text = f"**💻 Generated Code:**\n```python\n{cleaned_code}\n```"
+            elif solver_full_output:
+                # Clean any thinking tokens from solver full output
+                cleaned_output = re.sub(r'<think>.*?</think>', '', str(solver_full_output), flags=re.DOTALL)
+                cleaned_output = cleaned_output.strip()
+                solver_code_text = f"**💻 Full Solver Output:**\n```\n{cleaned_output}\n```"
+            
+            if verifier_results:
+                if isinstance(verifier_results, dict):
+                    solver_results_text = f"**🧪 Test Results:**\n"
+                    solver_results_text += f"**Passed:** {passed_tests}/{total_tests}\n"
+                    solver_results_text += f"**Status:** {'✅ Passed' if solved else '❌ Failed'}\n"
+                    solver_results_text += f"**Details:**\n```json\n{json.dumps(verifier_results, indent=2)}\n```"
+                else:
+                    solver_results_text = f"**🧪 Test Results:**\n```\n{verifier_results}\n```"
+            
+            if context_manager_prompt:
+                context_manager_prompt_text = f"**📝 ContextManager Prompt:**\n```\n{context_manager_prompt}\n```"
+
+        return (position_text, metadata_text, perf_text, question_text, thinking_text, response_text, step_perf_text, actions_text, outputs_text, solver_prompt_text, solver_code_text, solver_results_text, context_manager_prompt_text, final_answer_text)
 
     custom_css = """
     .trajectory-container { margin-bottom: 20px !important; }
@@ -509,11 +581,14 @@ def main(trajectory_file: str = "./trajectories/sample_trajectories/search_traje
                     final_answer_output = gr.Markdown()
 
             with gr.Column(scale=2):
+                with gr.Accordion("📝 ContextManager Prompt", open=True):
+                    context_manager_prompt_output = gr.Markdown(elem_classes=["metadata-box"])
+
                 with gr.Accordion("🧠 Agent Thinking", open=True):
                     thinking_output = gr.Textbox(label="Internal Reasoning", lines=6, interactive=False, elem_classes=["thinking-box"])
 
                 with gr.Accordion("💬 Agent Response", open=True):
-                    response_output = gr.Textbox(label="Final Response to User", lines=4, interactive=False)
+                    response_output = gr.Markdown(label="Final Response to User")
 
                 with gr.Accordion("📈 Step Performance", open=True):
                     step_perf_output = gr.Markdown(elem_classes=["performance-box"])
@@ -523,8 +598,13 @@ def main(trajectory_file: str = "./trajectories/sample_trajectories/search_traje
 
                 with gr.Accordion("📋 Tool Results", open=True):
                     outputs_output = gr.Markdown(elem_classes=["outputs-box"])
+                    
+                with gr.Accordion("🤖 Solver Information", open=True):
+                    solver_prompt_output = gr.Markdown(elem_classes=["metadata-box"])
+                    solver_code_output = gr.Markdown(elem_classes=["actions-box"])
+                    solver_results_output = gr.Markdown(elem_classes=["outputs-box"])
 
-        all_outputs = [current_pos_display, metadata_output, performance_output, question_output, thinking_output, response_output, step_perf_output, actions_output, outputs_output, final_answer_output]
+        all_outputs = [current_pos_display, metadata_output, performance_output, question_output, thinking_output, response_output, step_perf_output, actions_output, outputs_output, solver_prompt_output, solver_code_output, solver_results_output, context_manager_prompt_output, final_answer_output]
 
         def reset_to_first_trajectory():
             return 0, 0

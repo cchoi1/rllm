@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import concurrent.futures
 import logging
 import time
@@ -11,7 +12,7 @@ import openai
 import torch
 from openai.types import Completion
 
-from rllm.agents.agent import Action, BaseAgent, Trajectory
+from rllm.agents.agent import Action, BaseAgent, Step, Trajectory
 from rllm.agents.utils import (
     convert_messages_to_tokens_and_masks,
     get_recent_assistant_user_messages,
@@ -133,6 +134,7 @@ class AgentExecutionEngine:
         Raises:
             NotImplementedError: If the engine type is not supported
         """
+        # print("PROMPT: ", prompt)
         if self.engine_name == "openai":
             return await self._get_openai_async(prompt, application_id, **kwargs)
         elif self.engine_name == "verl":
@@ -261,6 +263,7 @@ class AgentExecutionEngine:
             done=False,
             info=info,
         )
+        
         messages = agent.chat_completions
         prompt_tokens, _ = convert_messages_to_tokens_and_masks(messages, tokenizer=self.tokenizer, parser=self.chat_parser, contains_first_msg=True, contains_generation_msg=True)
         prompt_token_len = len(prompt_tokens)
@@ -303,6 +306,20 @@ class AgentExecutionEngine:
             # Update agent with model response
             action: Action = agent.update_from_model(response)
             action = action.action
+            
+            # Extract thinking from response if present
+            thought = ""
+            if "</think>" in response:
+                try:
+                    # Get everything before </think>
+                    think_text = response.split("</think>")[0]
+                    # Strip <think> tag if it exists
+                    if "<think>" in think_text:
+                        thought = think_text.split("<think>")[1].strip()
+                    else:
+                        thought = think_text.strip()
+                except:
+                    thought = ""
 
             # Take step in environment using the executor
             start_time = time.time()
@@ -338,6 +355,36 @@ class AgentExecutionEngine:
             cur_step.reward = reward
             cur_step.done = done
             cur_step.info.update(info)
+            
+            # Add thought field to the step
+            if hasattr(cur_step, 'thought'):
+                cur_step.thought = thought
+            else:
+                # If thought attribute doesn't exist, add it dynamically
+                setattr(cur_step, 'thought', thought)
+            
+            # Update step extras with solver information from the observation
+            if hasattr(agent, '_current_obs') and isinstance(agent._current_obs, dict):
+                # find the last agent chat completion with "role" == "user"
+                last_user_msg = None
+                for msg in reversed(agent.chat_completions):
+                    if msg["role"] == "user":
+                        last_user_msg = msg
+                        break
+                context_manager_prompt = last_user_msg
+                # print("Updating step extras for idx", idx)
+                if not hasattr(cur_step, 'extras') or cur_step.extras is None:
+                    cur_step.extras = {}
+                cur_step.extras.update({
+                    "solver_prompt": agent._current_obs.get("solver_prompt", ""),
+                    "solver_full_output": agent._current_obs.get("solver_full_output", ""),
+                    "solver_code": agent._current_obs.get("solver_output", ""),
+                    "verifier_results": agent._current_obs.get("verifier_results", ""),
+                    "passed_tests": agent._current_obs.get("passed_tests", 0),
+                    "total_tests": agent._current_obs.get("total_tests", 0),
+                    "solved": agent._current_obs.get("solved", False),
+                    "context_manager_prompt": self.chat_parser.parse([last_user_msg], add_generation_prompt=True, is_first_msg=True),
+                })
 
             chat_completions_messages = agent.chat_completions
             assistant_message, env_messages = get_recent_assistant_user_messages(chat_completions_messages)
@@ -487,7 +534,10 @@ class AgentExecutionEngine:
         self.executor = ThreadPoolExecutor(max_workers=max_concurrency)
 
         if self.engine_name == "verl":
-            self.rollout_engine.wake_up()
+            # self.rollout_engine.wake_up()
+            wake = getattr(self.rollout_engine, "wake_up", None)
+            if callable(wake):
+                wake()
 
         async def launch_one_trajectory_task(env_idx: int):
             try:

@@ -91,7 +91,7 @@ class CompetitionCodingEnv(MultiTurnEnvironment):
             Tuple of (reward: float, metadata: Dict)
         """
         assert self.reward_fn is not None, "Reward function is not set"
-        reward_response = self.reward_fn(data_source=task.get("data_source", ""), llm_solution=action, ground_truth=task["ground_truth"])
+        reward_response = self.reward_fn(task_info=task, action=action)
         # all_passed_bonus = 1.0 if reward_response.metadata["all_passed"] else 0.0
         # n_passed_tests = reward_response.metadata["passed_tests"]
         # n_total_tests = reward_response.metadata["total_tests"]
@@ -99,5 +99,15 @@ class CompetitionCodingEnv(MultiTurnEnvironment):
         return reward_response.reward, reward_response.metadata
 
     @staticmethod
-    def from_dict(env_args: dict) -> "CompetitionCodingEnv":
-        return CompetitionCodingEnv(task=env_args["task"], max_turns=env_args.get("max_turns", 2), reward_bonus_coeff=env_args.get("reward_bonus_coeff", 0.0))
+    def from_dict(info: dict) -> "CompetitionCodingEnv":
+        # Pull out env-specific knobs first
+        reward_fn = info.pop("reward_fn", None)
+        max_turns = info.pop("max_turns", 2)
+        reward_bonus_coeff = info.pop("reward_bonus_coeff", 0.0)
+
+        # If the caller wrapped the task, use it; otherwise treat the merged dict as the task
+        task = info.get("task", info)
+
+        env = CompetitionCodingEnv(task=task, max_turns=max_turns, reward_bonus_coeff=reward_bonus_coeff)
+        env.reward_fn = reward_fn
+        return env
