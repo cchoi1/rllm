@@ -11,6 +11,8 @@ RLLM_DIR=$(python3 -c "import rllm; import os; print(os.path.dirname(os.path.dir
 
 MODEL_PATH=deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B
 
+NUM_GPUS=4
+
 python3 -m examples.deepscaler.train_deepscaler \
     algorithm.adv_estimator=grpo \
     data.train_batch_size=128 \
@@ -57,7 +59,7 @@ python3 -m examples.deepscaler.train_deepscaler \
     trainer.project_name='rllm-agent' \
     trainer.experiment_name='deepscaler-1.5b-8k' \
     trainer.val_before_train=True \
-    trainer.n_gpus_per_node=8 \
+    trainer.n_gpus_per_node=$NUM_GPUS \
     trainer.nnodes=1 \
     trainer.save_freq=20 \
     trainer.test_freq=20 \

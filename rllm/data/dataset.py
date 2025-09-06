@@ -415,10 +415,13 @@ class DatasetRegistry:
         dataset_dir = os.path.join(cls._DATASET_DIR, name)
         os.makedirs(dataset_dir, exist_ok=True)
         
-        # Save the combined dataset
+        # Save the combined dataset (both regular and verl versions)
         dataset_path = os.path.join(dataset_dir, f"{split}.parquet")
+        verl_dataset_path = os.path.join(dataset_dir, f"{split}_verl.parquet")
+        
         combined_df = pd.DataFrame(all_data)
         combined_df.to_parquet(dataset_path)
+        combined_df.to_parquet(verl_dataset_path)  # Save as verl version too
         
         # Update registry
         registry = cls._load_registry()

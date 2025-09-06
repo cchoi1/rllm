@@ -6,7 +6,7 @@ export VLLM_ENGINE_ITERATION_TIMEOUT_S=1000000000
 
 RLLM_DIR=$(python3 -c "import rllm; import os; print(os.path.dirname(os.path.dirname(rllm.__file__)))")
 
-NUM_GPUS=8
+NUM_GPUS=4
 MODEL_PATH="Qwen/Qwen2.5-Coder-1.5B-Instruct"
 
 RUN_DIR=/scr/cchoi1/rllm/runs/$(date +%m-%d-%H-%M)
