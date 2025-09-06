@@ -1,0 +1,24 @@
+{
+  "deepcoder": {
+    "train": "/juice2/scr2/cchoi1/rllm/rllm/data/datasets/deepcoder/train.parquet",
+    "test": "/juice2/scr2/cchoi1/rllm/rllm/data/datasets/deepcoder/test.parquet"
+  },
+  "lcb": {
+    "train": "/nlp/scr/cchoi1/rllm/rllm/data/datasets/lcb/train.parquet",
+    "test": "/nlp/scr/cchoi1/rllm/rllm/data/datasets/lcb/test.parquet"
+  },
+  "deepscaler_math": {
+    "train": "/nlp/scr/cchoi1/rllm/rllm/data/datasets/deepscaler_math/train.parquet"
+  },
+  "aime2024": {
+    "test": "/nlp/scr/cchoi1/rllm/rllm/data/datasets/aime2024/test.parquet"
+  },
+  "deepcoder_chunked2": {
+    "train": "/juice2/scr2/cchoi1/rllm/rllm/data/datasets/deepcoder_chunked2/train_chunks_metadata.json",
+    "test": "/juice2/scr2/cchoi1/rllm/rllm/data/datasets/deepcoder_chunked2/test_chunks_metadata.json"
+  },
+  "deepcoder_chunked": {
+    "train": "/lfs/hyperturing1/0/echoi1/rllm/rllm/data/datasets/deepcoder_chunked/train_chunks_metadata.json",
+    "test": "/lfs/hyperturing1/0/echoi1/rllm/rllm/data/datasets/deepcoder_chunked/test_chunks_metadata.json"
+  }
+}

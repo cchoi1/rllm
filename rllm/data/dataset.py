@@ -374,6 +374,68 @@ class DatasetRegistry:
         return True
 
     @classmethod
+    def register_chunked_dataset(cls, name: str, chunks_dir: str, split: str) -> Dataset:
+        """Register a chunked dataset by loading all chunks and combining them.
+
+        Args:
+            name: Name of the dataset
+            chunks_dir: Directory containing the chunk files
+            split: Split name (e.g., 'train', 'test')
+
+        Returns:
+            Dataset: The registered dataset containing all chunks combined
+        """
+        import glob
+        
+        # Find all chunk files for the given split
+        chunk_pattern = os.path.join(chunks_dir, f"{split}_verl_chunk_*.parquet")
+        chunk_files = sorted(glob.glob(chunk_pattern))
+        
+        if not chunk_files:
+            raise FileNotFoundError(f"No chunk files found for split '{split}' in directory '{chunks_dir}'")
+        
+        logger.info(f"Found {len(chunk_files)} chunk files for split '{split}'")
+        
+        # Load and combine all chunks
+        all_data = []
+        for chunk_file in chunk_files:
+            logger.info(f"Loading chunk: {chunk_file}")
+            chunk_data = pl.read_parquet(chunk_file).to_dicts()
+            all_data.extend(chunk_data)
+        
+        logger.info(f"Combined {len(all_data)} examples from {len(chunk_files)} chunks")
+        
+        # Create a combined dataset
+        combined_dataset = Dataset(data=all_data, name=name, split=split)
+        
+        # Register the combined dataset in the registry
+        cls._ensure_directories()
+        
+        # Create dataset directory if it doesn't exist
+        dataset_dir = os.path.join(cls._DATASET_DIR, name)
+        os.makedirs(dataset_dir, exist_ok=True)
+        
+        # Save the combined dataset
+        dataset_path = os.path.join(dataset_dir, f"{split}.parquet")
+        combined_df = pd.DataFrame(all_data)
+        combined_df.to_parquet(dataset_path)
+        
+        # Update registry
+        registry = cls._load_registry()
+        
+        # Initialize dataset entry if it doesn't exist
+        if name not in registry:
+            registry[name] = {}
+        
+        # Add the split to the dataset
+        registry[name][split] = dataset_path
+        cls._save_registry(registry)
+        
+        logger.info(f"Registered chunked dataset '{name}' split '{split}' with {len(all_data)} examples.")
+        
+        return combined_dataset
+
+    @classmethod
     def apply_verl_postprocessing(cls, data: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Apply Verl postprocessing to the dataset.
 
