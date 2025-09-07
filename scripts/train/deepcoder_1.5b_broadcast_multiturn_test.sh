@@ -1,30 +1,63 @@
+# export CUDA_VISIBLE_DEVICES=0,1,2,3
+# export VLLM_ATTENTION_BACKEND=FLASH_ATTN
+# export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:False"
+# export VLLM_USE_V1=1
+# export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
+# export VLLM_ENGINE_ITERATION_TIMEOUT_S=1000000000
+# export CUDA_DEVICE_ORDER=PCI_BUS_ID
+# export HYDRA_FULL_ERROR=1
+
+# # make DDP robust: force NCCL on CUDA and quiet NCCL noise
+# export FORCE_NCCL=1
+# export NCCL_DEBUG=WARN
+# export NCCL_ASYNC_ERROR_HANDLING=1
+
+# # tmp + ray isolation
+# export RAY_TMPDIR="/tmp/ray_${SLURM_JOB_ID:-$$}"
+# export TMPDIR="/tmp/tmp_${SLURM_JOB_ID:-$$}"
+# mkdir -p "$RAY_TMPDIR" "$TMPDIR"
+
+# # clean old ray, then start a fresh head with 8 GPUs
+# ray stop -f || true
+# rm -rf /tmp/ray /tmp/*/ray 2>/dev/null || true
+
+# export RAY_NAMESPACE="cm-${USER}-$$"
+# ray start --head --num-gpus=8 --temp-dir "$RAY_TMPDIR"
+
+# # children attach to this head
+# export RAY_ADDRESS=auto
+# export VLLM_DISTRIBUTED_EXECUTOR_BACKEND=ray
+# ray status
+
+# # 1) Start a local Ray head that owns all 8 GPUs on this node
+# ray start --head --num-gpus=8 --temp-dir "$RAY_TMPDIR"
+
+# # (optional) sanity
+# ray status
+
+# # 2) Ensure children (vLLM) join this cluster
+# export RAY_ADDRESS=auto
+# export RAY_NAMESPACE="cm-${USER}-$$"
+# export VLLM_DISTRIBUTED_EXECUTOR_BACKEND=ray
+
+# echo "RAY_TMPDIR=$RAY_TMPDIR  RAY_ADDRESS=${RAY_ADDRESS:-<unset>}  RAY_NAMESPACE=$RAY_NAMESPACE"
+
+set -x
+
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:False"
 export VLLM_USE_V1=1
 export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
-export VLLM_ENGINE_ITERATION_TIMEOUT_S=1000000000
-export CUDA_DEVICE_ORDER=PCI_BUS_ID
-export HYDRA_FULL_ERROR=1
-
-# --- scratch; isolate by user+pid or Slurm job id
-export RAY_TMPDIR="/tmp/ray_${SLURM_JOB_ID:-$$}"
-export TMPDIR="/tmp/tmp_${SLURM_JOB_ID:-$$}"
-mkdir -p "$RAY_TMPDIR" "$TMPDIR"
-
-# --- guarantee we don't attach to someone else's Ray
-unset RAY_ADDRESS RAY_NAMESPACE RAY_RUNTIME_ENV_DIR RAY_HEAD_NODE
-export RAY_NAMESPACE="cm-${USER}-$$"
-
-# clean any previous instances and stray shared dirs
-ray stop -f || true
-rm -rf /tmp/ray /tmp/*/ray 2>/dev/null || true
-
-echo "RAY_TMPDIR=$RAY_TMPDIR  RAY_ADDRESS=${RAY_ADDRESS:-<unset>}  RAY_NAMESPACE=$RAY_NAMESPACE"
+export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
 
 RLLM_DIR=$(python3 -c "import rllm; import os; print(os.path.dirname(os.path.dirname(rllm.__file__)))")
 
 MODEL_PATH="agentica-org/DeepCoder-1.5B-Preview"
-NUM_GPUS=2
+NUM_GPUS=4
+
+# echo "RAY_ADDRESS=${RAY_ADDRESS:-<unset>}  RAY_NAMESPACE=${RAY_NAMESPACE:-<unset>}"
+# ray status || true
+# nvidia-smi --query-gpu=index,name,memory.total --format=csv
 
 python3 -m examples.deepcoder.train_deepcoder_multiturn \
     agent.max_steps=4 \

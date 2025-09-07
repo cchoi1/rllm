@@ -1,24 +1,14 @@
 {
   "deepcoder": {
-    "train": "/juice2/scr2/cchoi1/rllm/rllm/data/datasets/deepcoder/train.parquet",
-    "test": "/juice2/scr2/cchoi1/rllm/rllm/data/datasets/deepcoder/test.parquet"
+    "train": "/scratch/m000123/context_manager_caroline/datasets/deepcoder/train.parquet",
+    "test": "/scratch/m000123/context_manager_caroline/datasets/deepcoder/test.parquet"
   },
   "lcb": {
-    "train": "/nlp/scr/cchoi1/rllm/rllm/data/datasets/lcb/train.parquet",
-    "test": "/nlp/scr/cchoi1/rllm/rllm/data/datasets/lcb/test.parquet"
-  },
-  "deepscaler_math": {
-    "train": "/nlp/scr/cchoi1/rllm/rllm/data/datasets/deepscaler_math/train.parquet"
-  },
-  "aime2024": {
-    "test": "/nlp/scr/cchoi1/rllm/rllm/data/datasets/aime2024/test.parquet"
-  },
-  "deepcoder_chunked2": {
-    "train": "/juice2/scr2/cchoi1/rllm/rllm/data/datasets/deepcoder_chunked2/train_chunks_metadata.json",
-    "test": "/juice2/scr2/cchoi1/rllm/rllm/data/datasets/deepcoder_chunked2/test_chunks_metadata.json"
+    "train": "/scratch/m000123/context_manager_caroline/datasets/lcb/train.parquet",
+    "test": "/scratch/m000123/context_manager_caroline/datasets/lcb/test.parquet"
   },
   "deepcoder_chunked": {
-    "train": "/juice2/scr2/cchoi1/rllm/rllm/data/datasets/deepcoder_chunked/train.parquet",
-    "test": "/juice2/scr2/cchoi1/rllm/rllm/data/datasets/deepcoder_chunked/test.parquet"
+    "train": "/scratch/m000123/context_manager_caroline/datasets/deepcoder_chunked/train.parquet",
+    "test": "/scratch/m000123/context_manager_caroline/datasets/deepcoder_chunked/test.parquet"
   }
 }

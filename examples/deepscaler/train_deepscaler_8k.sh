@@ -58,7 +58,7 @@ python3 -m examples.deepscaler.train_deepscaler \
     trainer.logger=['console','wandb'] \
     trainer.project_name='rllm-agent' \
     trainer.experiment_name='deepscaler-1.5b-8k' \
-    trainer.val_before_train=True \
+    ++trainer.val_before_train=True \
     trainer.n_gpus_per_node=$NUM_GPUS \
     trainer.nnodes=1 \
     trainer.save_freq=20 \

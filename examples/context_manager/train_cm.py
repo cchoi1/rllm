@@ -24,14 +24,8 @@ from rllm.data.dataset import DatasetRegistry
 def register_deepcoder_chunked_dataset():
     """Register the chunked DeepCoder dataset for training."""
     
-    # Path to the chunked DeepCoder dataset
-    deepcoder_chunks_dir = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),  # Go up to rllm root
-        "rllm", 
-        "data", 
-        "datasets", 
-        "deepcoder_verl_chunks"
-    )
+    # Path to the chunked DeepCoder dataset in rllm/data/datasets/
+    deepcoder_chunks_dir = "/scratch/m000123/context_manager_caroline/datasets/deepcoder_verl_chunks"
     
     if not os.path.exists(deepcoder_chunks_dir):
         print(f"DeepCoder chunks directory not found: {deepcoder_chunks_dir}")
@@ -89,7 +83,8 @@ def main(config):
             "remote_url": solver_remote_url,
             "remote_api_key": "None",
             "gen": {
-                "temperature": config.actor_rollout_ref.rollout.temperature,
+                # "temperature": config.actor_rollout_ref.rollout.temperature,
+                "temperature": 0.0,
                 "max_new_tokens": config.env_args.solver_remote.max_tokens,
             },
             "use_marginal_improvement": True,
@@ -100,7 +95,8 @@ def main(config):
             "base_url": solver_remote_url,
             "api_key": "None",
             "model": config.actor_rollout_ref.model.path,
-            "temperature": config.actor_rollout_ref.rollout.temperature,
+            # "temperature": config.actor_rollout_ref.rollout.temperature,
+            "temperature": 0.0,
             "max_tokens": config.env_args.solver_remote.max_tokens,
         },
         "max_turns": 4,

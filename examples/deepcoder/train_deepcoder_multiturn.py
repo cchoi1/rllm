@@ -14,13 +14,7 @@ def register_deepcoder_chunked_dataset():
     """Register the chunked DeepCoder dataset for training."""
     
     # Path to the chunked DeepCoder dataset in rllm/data/datasets/
-    deepcoder_chunks_dir = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.dirname(__file__))),  # Go up to rllm root
-        "rllm", 
-        "data", 
-        "datasets", 
-        "deepcoder_verl_chunks"
-    )
+    deepcoder_chunks_dir = "/scratch/m000123/context_manager_caroline/datasets/deepcoder_verl_chunks"
     
     if not os.path.exists(deepcoder_chunks_dir):
         print(f"DeepCoder chunks directory not found: {deepcoder_chunks_dir}")
@@ -73,7 +67,13 @@ def main(config):
     train_dataset, test_dataset = register_deepcoder_chunked_dataset()
     # train_dataset = DatasetRegistry.load_dataset("lcb", "train")
     # test_dataset = DatasetRegistry.load_dataset("lcb", "test")
-    
+
+    print("TRAIN DS:", type(train_dataset), getattr(train_dataset, "name", None), "len?", getattr(train_dataset, "__len__", lambda: "NA")())
+    print("VAL   DS:", type(test_dataset), getattr(test_dataset, "name", None), "len?", getattr(test_dataset, "__len__", lambda: "NA")())
+
+    # Optional: if your dataset object has .files/.paths
+    print("Train files sample:", getattr(train_dataset, "files", None) or getattr(train_dataset, "paths", None))
+
     if train_dataset is None:
         print("Failed to register chunked dataset. Exiting.")
         return

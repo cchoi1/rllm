@@ -16,7 +16,8 @@ FILE_IDS = {
 }
 
 # Get the rllm package path
-RLLM_PATH = os.path.dirname(os.path.dirname(rllm.__file__))
+# RLLM_PATH = os.path.dirname(os.path.dirname(rllm.__file__))
+RLLM_PATH = "/scratch/m000123/context_manager_caroline"
 
 # Define the destination paths
 DEST_PATHS = {

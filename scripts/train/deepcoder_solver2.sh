@@ -6,10 +6,11 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=128GB
 #SBATCH --cpus-per-task=32
-#SBATCH --job-name="deepcoder_1.5b_server"
-#SBATCH --output=deepcoder_1.5b_server.log
+#SBATCH --job-name="deepcoder_1.5b_server2"
+#SBATCH --output=deepcoder_1.5b_server2.log
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=cchoi1@stanford.edu
+#SBATCH --exclude
 
 module load slurm 
 module load nvhpc 
@@ -69,4 +70,3 @@ for i in {1..30}; do
 done
 
 wait "$SERVER_PID"
-

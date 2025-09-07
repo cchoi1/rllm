@@ -46,7 +46,8 @@ def load_dataset(dataset_enum: TrainDataset.Math | TrainDataset.Code | TestDatas
         data_dir = "test"
 
     # Construct file path
-    current_dir = os.path.dirname(os.path.realpath(__file__))
+    # current_dir = os.path.dirname(os.path.realpath(__file__))
+    current_dir = "/scratch/m000123/context_manager_caroline/rllm/data"
 
     file_path = os.path.join(current_dir, data_dir, category_dir, f"{dataset_name}.json")
 
