@@ -3,14 +3,14 @@
 #SBATCH --account=tiger
 #SBATCH --time=120:00:00
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:8
-#SBATCH --mem=256GB
-#SBATCH --cpus-per-task=64
+#SBATCH --gres=gpu:4
+#SBATCH --mem=128GB
+#SBATCH --cpus-per-task=24
 #SBATCH --job-name="deepcoder_solver"
 #SBATCH --output=deepcoder_solver.log
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=cchoi1@stanford.edu
-#SBATCH --exclude=tiger[1-7]
+#SBATCH --exclude=tiger[1-5]
 
 # ---- Env
 source /nlp/scr/cchoi1/miniconda3/etc/profile.d/conda.sh
@@ -20,6 +20,17 @@ cd /nlp/scr/cchoi1/rllm
 set -a
 . /nlp/scr/cchoi1/LiveCodeBench/.env
 set +a
+
+# ------------------------------
+# Run dir under scratch + logging
+# ------------------------------
+rm -rf /scr/cchoi1/rllm/runs/*
+RUN_DIR=/scr/cchoi1/rllm/runs/$(date +%m-%d-%H-%M)
+mkdir -p "$RUN_DIR"
+
+# Redirect all subsequent stdout/stderr into a run log inside RUN_DIR
+RUN_LOG="$RUN_DIR/run.log"
+exec > >(tee -a "$RUN_LOG") 2>&1
 
 set -x
 echo "Node: $(hostname -s)"
@@ -50,76 +61,46 @@ echo "RAY_TMPDIR=$RAY_TMPDIR  RAY_NAMESPACE=$RAY_NAMESPACE"
 # Config
 # ------------------------------
 MODEL="agentica-org/DeepCoder-1.5B-Preview"   # solver model replicated on each GPU
-NUM_GPUS=8
-BASE_PORT=8000                                      # endpoints will be 8000..8007
-
-rm -rf /scr/cchoi1/rllm/runs/*
-RUN_DIR=/scr/cchoi1/rllm/runs/$(date +%m-%d-%H-%M)
-mkdir -p "$RUN_DIR"
+NUM_GPUS=4
+BASE_PORT=8000                                 # endpoints will be 8000..8007
 
 # ------------------------------
-# Launch one vLLM server per GPU
+# Launch vLLM server
 # ------------------------------
-PIDS=()
-ENDPOINTS=()
+LOG="$RUN_DIR/vllm_server.log"
 
-for i in $(seq 0 $((NUM_GPUS-1))); do
-  PORT=$((BASE_PORT + i))
-  LOG="$RUN_DIR/vllm_gpu${i}.log"
+CUDA_VISIBLE_DEVICES=0,1,2,3 \
+vllm serve "$MODEL" \
+  --host 0.0.0.0 \
+  --port 12345 \
+  --tensor-parallel-size $NUM_GPUS \
+  --gpu-memory-utilization 0.90 \
+  --enable-chunked-prefill \
+  --dtype auto \
+  2>&1 | tee -a "$LOG" &
 
-  echo "Starting replica on GPU $i -> port $PORT; log: $LOG"
-
-  CUDA_VISIBLE_DEVICES=$i \
-  vllm serve "$MODEL" \
-    --host 0.0.0.0 \
-    --port "$PORT" \
-    --tensor-parallel-size 1 \
-    --gpu-memory-utilization 0.90 \
-    --enable-chunked-prefill \
-    --dtype auto \
-    2>&1 | tee -a "$LOG" &
-
-  PIDS+=($!)
-  ENDPOINTS+=("http://127.0.0.1:${PORT}/v1")
-done
-
-cleanup() {
-  echo "Stopping replicas..."
-  for pid in "${PIDS[@]}"; do
-    kill "$pid" 2>/dev/null || true
-  done
-}
-trap cleanup EXIT
+SERVER_PID=$!
+trap 'kill "$SERVER_PID" 2>/dev/null || true' EXIT
+echo "Launched vLLM server (pid=$SERVER_PID); logs: $LOG"
 
 # ------------------------------
-# Readiness checks for each replica
+# Readiness check (with API key)
 # ------------------------------
-for idx in "${!ENDPOINTS[@]}"; do
-  URL="${ENDPOINTS[$idx]}"
-  echo "Waiting for replica $idx at $URL ..."
-  READY=0
-  for attempt in $(seq 1 30); do
-    if curl -sSf "${URL}/models" >/dev/null; then
-      echo "Replica $idx ready at ${URL}"
-      READY=1
-      break
-    fi
-    echo "Replica $idx not ready yet... (${attempt}/30). Sleeping 10s."
-    sleep 10
-  done
-  if [[ $READY -ne 1 ]]; then
-    echo "ERROR: Replica $idx failed to become ready at ${URL}"
-    exit 1
+READY=0
+BASE_URL="http://127.0.0.1:12345/v1"
+for i in {1..30}; do
+  if curl -sSf "${BASE_URL}/models" >/dev/null; then
+    echo "vLLM server ready on ${BASE_URL}"
+    READY=1
+    break
   fi
+  echo "Not ready yet... (${i}/30). Sleeping 10s."
+  sleep 10
 done
 
-echo "All replicas are up."
-echo "=== Solver endpoints (use these in remote_urls) ==="
-for url in "${ENDPOINTS[@]}"; do
-  echo "  $url"
-done
+if [[ "$READY" -ne 1 ]]; then
+  echo "ERROR: vLLM did not become ready." >&2
+  exit 1
+fi
 
-# ------------------------------
-# Keep job alive while servers run
-# ------------------------------
-wait -n  # if any replica exits, the job ends
+wait "$SERVER_PID"

@@ -1,16 +1,16 @@
 #!/bin/bash
-#SBATCH --partition=tiger
+#SBATCH --partition=sphinx
 #SBATCH --account=nlp
 #SBATCH --time=120:00:00
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:4
-#SBATCH --mem=256GB
-#SBATCH --cpus-per-task=32
-#SBATCH --job-name="qwen_coder_solver"
-#SBATCH --output=qwen_coder_solver.log
+#SBATCH --gres=gpu:1
+#SBATCH --mem=64GB
+#SBATCH --cpus-per-task=16
+#SBATCH --job-name="deepcoder_solver2"
+#SBATCH --output=deepcoder_solver2.log
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=cchoi1@stanford.edu
-#SBATCH --exclude=tiger[1-5,7,8]
+#SBATCH --exclude=sphinx10
 
 # ---- Env
 source /nlp/scr/cchoi1/miniconda3/etc/profile.d/conda.sh
@@ -60,8 +60,8 @@ echo "RAY_TMPDIR=$RAY_TMPDIR  RAY_NAMESPACE=$RAY_NAMESPACE"
 # ------------------------------
 # Config
 # ------------------------------
-MODEL="Qwen/Qwen2.5-Coder-1.5B-Instruct"   # solver model replicated on each GPU
-NUM_GPUS=4
+MODEL="agentica-org/DeepCoder-1.5B-Preview"   # solver model replicated on each GPU
+NUM_GPUS=1
 BASE_PORT=8000                                 # endpoints will be 8000..8007
 
 # ------------------------------
@@ -69,7 +69,7 @@ BASE_PORT=8000                                 # endpoints will be 8000..8007
 # ------------------------------
 LOG="$RUN_DIR/vllm_server.log"
 
-CUDA_VISIBLE_DEVICES=0,1,2,3 \
+CUDA_VISIBLE_DEVICES=0 \
 vllm serve "$MODEL" \
   --host 0.0.0.0 \
   --port 12345 \

@@ -79,7 +79,9 @@ def train_agent(config, agent_class=None, env_class=None, agent_args=None, env_a
         mapping[Role.RefPolicy] = global_pool_id
 
     reward_fn = load_reward_manager(config, tokenizer, num_examine=0, **config.reward_model.get("reward_kwargs", {}))
+    print(f"[rllm/trainer/verl/train_agent_ppo.py] Reward function: {reward_fn}")
     val_reward_fn = load_reward_manager(config, tokenizer, num_examine=1)
+    print(f"[rllm/trainer/verl/train_agent_ppo.py] Validation reward function: {val_reward_fn}")
     resource_pool_manager = ResourcePoolManager(resource_pool_spec=resource_pool_spec, mapping=mapping)
 
     if env_class is None:

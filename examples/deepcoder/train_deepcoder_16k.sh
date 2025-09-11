@@ -11,7 +11,10 @@ export VLLM_ENGINE_ITERATION_TIMEOUT_S=1000000000
 RLLM_DIR=$(python3 -c "import rllm; import os; print(os.path.dirname(os.path.dirname(rllm.__file__)))")
 
 # DeepCoder base model - 14B parameter DeepSeek-R1 distilled model
-MODEL_PATH=deepseek-ai/DeepSeek-R1-Distill-Qwen-14B
+# MODEL_PATH=deepseek-ai/DeepSeek-R1-Distill-Qwen-14B
+MODEL_PATH=agentica-org/DeepCoder-1.5B-Preview
+
+NUM_GPUS=4
 
 python3 -m examples.deepcoder.train_deepcoder \
     algorithm.adv_estimator=grpo \
@@ -48,7 +51,7 @@ python3 -m examples.deepcoder.train_deepcoder \
     actor_rollout_ref.rollout.temperature=0.6 \
     actor_rollout_ref.rollout.top_p=0.95 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.8 \
-    actor_rollout_ref.rollout.n=8 \
+    actor_rollout_ref.rollout.n=$NUM_GPUS \
     actor_rollout_ref.rollout.val_kwargs.n=2 \
     actor_rollout_ref.rollout.val_kwargs.temperature=0.6 \
     actor_rollout_ref.rollout.val_kwargs.top_p=0.95 \
@@ -63,7 +66,7 @@ python3 -m examples.deepcoder.train_deepcoder \
     trainer.project_name='rllm-deepcoder' \
     trainer.experiment_name='deepcoder-14b-16k-stage1' \
     trainer.val_before_train=True \
-    trainer.n_gpus_per_node=8 \
+    trainer.n_gpus_per_node=$NUM_GPUS \
     trainer.nnodes=1 \
     trainer.save_freq=10 \
     trainer.test_freq=10 \

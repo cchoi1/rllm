@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:4
 #SBATCH --mem=400GB
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=64
 #SBATCH --job-name="deepcoder_1.5b_broadcast_multiturn"
 #SBATCH --output=deepcoder_1.5b_broadcast_multiturn.log
 #SBATCH --mail-type=END,FAIL
@@ -57,6 +57,8 @@ RLLM_DIR=$(python3 -c "import rllm; import os; print(os.path.dirname(os.path.dir
 MODEL_PATH="agentica-org/DeepCoder-1.5B-Preview"
 NUM_GPUS=4
 
+# NOTE: correct data.max_prompt_length to 8192!!!
+
 python3 -m examples.deepcoder.train_deepcoder_multiturn \
     agent.max_steps=4 \
     agent.use_stepwise_advantage=True \
@@ -67,7 +69,7 @@ python3 -m examples.deepcoder.train_deepcoder_multiturn \
     hydra.run.dir="$RUN_DIR" \
     +trainer.save_dir="$RUN_DIR/checkpoints" \
     ++trainer.resume_from_checkpoint="$RESUME_FROM_CHECKPOINT" \
-    ++trainer.resume_mode=/nlp/scr/cchoi1/rllm/checkpoints/rllm-deepcoder/multi-deepcoder1.5b-broadcast-4steps/global_step_15 \
+    ++trainer.resume_mode=/nlp/scr/cchoi1/rllm/checkpoints/rllm-deepcoder/multi-deepcoder1.5b-broadcast-4steps/global_step_20 \
     algorithm.adv_estimator=grpo \
     data.train_batch_size=64 \
     data.val_batch_size=128 \

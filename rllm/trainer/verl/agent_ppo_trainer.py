@@ -215,6 +215,23 @@ class AgentPPOTrainer(RayPPOTrainer):
                         # Rejection sampling based on rewards
                         # Group rewards by uid
                         uids = batch.non_tensor_batch["uid"]
+
+                        ### MODIFIED LOGGING CODE FOR CM MULTITURN RL ###
+                        # Use the computed reward tensor directly to avoid referencing an undefined variable
+                        full_seq_scores = reward_tensor.sum(-1)  # (B,)
+                        # group by uid to get per-episode return (max if multiple seqs/uid, or mean; pick one)
+                        episode_return = []
+                        for uid in np.unique(uids):
+                            uid_mask = (uids == uid)
+                            # GRPO-style: often take max over sequences for pass@k-ish behavior
+                            episode_return.append(full_seq_scores[uid_mask].max().item())
+                        episode_return = torch.tensor(episode_return, dtype=torch.float32)
+
+                        metrics["env/episode_return/mean"] = episode_return.mean().item()
+                        metrics["env/episode_return/min"] = episode_return.min().item() 
+                        metrics["env/episode_return/max"] = episode_return.max().item()
+                        ### END MODIFIED LOGGING CODE FOR CM MULTITURN RL ###
+                        
                         unique_uids = np.unique(uids)
                         valid_mask = torch.ones(len(uids), dtype=torch.bool)
                         solve_none = 0
@@ -365,12 +382,28 @@ class AgentPPOTrainer(RayPPOTrainer):
                             clip_advantages=self.config.algorithm.clip_advantages,
                         )
 
+                        ### MODIFIED LOGGING CODE FOR CM MULTITURN RL ###
+                        adv = batch.batch["advantages"]  # masked per token
+                        ret = batch.batch["returns"]
+                        metrics["critic/targets/advantages/mean"] = adv.mean().item()
+                        metrics["critic/targets/advantages/std"] = adv.std().item()
+                        metrics["critic/targets/returns/mean"] = ret.mean().item()
+                        metrics["critic/targets/returns/std"] = ret.std().item()
+                        ### END MODIFIED LOGGING CODE FOR CM MULTITURN RL ###
+
                         if self.config.agent.use_stepwise_advantage and self.config.agent.stepwise_advantage_mode == "broadcast":
                             # remove the padded last steps
                             # Merging the separated out steps using the advantage from last steps
-                            self._stepwise_advantage_broadcast(batch, other_step_batch=other_step_batch)
-                            # batch = batch.merge(other_step_batch)
-                            batch = DataProto.concat([batch, other_step_batch])
+                            # Skip if either side is empty after filtering (e.g., rejection sampling/world-size trimming)
+                            last_sz = batch.batch["prompts"].shape[0] if "prompts" in batch.batch else 0
+                            other_sz = other_step_batch.batch["prompts"].shape[0] if "prompts" in other_step_batch.batch else 0
+                            if last_sz == 0 or other_sz == 0:
+                                # Nothing to broadcast/merge; continue with the remaining batch
+                                pass
+                            else:
+                                self._stepwise_advantage_broadcast(batch, other_step_batch=other_step_batch)
+                                # batch = batch.merge(other_step_batch)
+                                batch = DataProto.concat([batch, other_step_batch])
 
                     batch = self._pad_dataproto_to_world_size(batch=batch)
                     # balance the number of valid tokens on each dp rank.
@@ -900,6 +933,15 @@ class AgentPPOTrainer(RayPPOTrainer):
         """
         Broadcast the advantage from last_step_batch to all other steps.
         """
+
+        # Guard against empty batches (can occur after rejection sampling and size alignment)
+        if (
+            "prompts" not in last_step_batch.batch
+            or "prompts" not in other_step_batch.batch
+            or last_step_batch.batch["prompts"].shape[0] == 0
+            or other_step_batch.batch["prompts"].shape[0] == 0
+        ):
+            return
 
         # NOTE: Currently takes the average of advantages. For GRPO, advantage and returns is uniform for each token so this makes no difference.
         # NOTE: For simplicity, assumes advantage and return is the same, which also holds for GRPO variants

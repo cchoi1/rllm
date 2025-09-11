@@ -3,11 +3,11 @@
 #SBATCH --account=nlp
 #SBATCH --time=120:00:00
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:4
-#SBATCH --mem=400GB
-#SBATCH --cpus-per-task=64
-#SBATCH --job-name="cm_broadcast_small_4_steps"
-#SBATCH --output=cm_broadcast_small_4_steps.log
+#SBATCH --gres=gpu:2
+#SBATCH --mem=200GB
+#SBATCH --cpus-per-task=24
+#SBATCH --job-name="qwen1.5b_cm_broadcast_4_steps"
+#SBATCH --output=qwen1.5b_cm_broadcast_4_steps.log
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=cchoi1@stanford.edu
 #SBATCH --exclude=sphinx[1-2,5,7]
@@ -62,7 +62,7 @@ mkdir -p "$RUN_DIR"
 
 # ---- Remote vLLM endpoint on Node A ----
 # Set these to your Node A host/port and API key used when launching vLLM
-VLLM_HOST="tiger6.stanford.edu"    # e.g., sphinx8.stanford.edu or 10.24.7.52
+VLLM_HOST="jagupard35.stanford.edu"    # e.g., sphinx8.stanford.edu or 10.24.7.52
 VLLM_PORT=12345
 VLLM_BASE_URL="http://${VLLM_HOST}:${VLLM_PORT}/v1"
 
@@ -73,14 +73,14 @@ for i in {1..10}; do
     break
   fi
   echo "Waiting for remote vLLM at ${VLLM_BASE_URL} ... (${i}/10)"
-  sleep 6
+  sleep 10
   if [[ $i -eq 10 ]]; then
     echo "ERROR: Could not reach remote vLLM at ${VLLM_BASE_URL} or model not listed."
     exit 1
   fi
 done
 
-NUM_GPUS=4
+NUM_GPUS=2
 
 python3 -m examples.context_manager.train_cm \
     agent.max_steps=4 \
@@ -141,8 +141,8 @@ python3 -m examples.context_manager.train_cm \
     actor_rollout_ref.rollout.val_kwargs.temperature=0.6 \
     actor_rollout_ref.rollout.val_kwargs.top_p=0.95 \
     actor_rollout_ref.ref.fsdp_config.param_offload=False \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=8 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=8 \
     algorithm.kl_ctrl.kl_coef=0.001 \
     algorithm.mask_truncated_samples=True \
     algorithm.clip_advantages=False \

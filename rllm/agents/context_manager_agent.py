@@ -221,6 +221,7 @@ class ContextManagerAgent(BaseAgent):
         else:
             last_solver_output = observation["solver_output"]
         last_verifier_results = _format_verifier_results(observation["verifier_results"])
+        last_feedback = observation["feedback"]
 
         if not self.use_memory:
             parts = [
@@ -236,36 +237,48 @@ class ContextManagerAgent(BaseAgent):
             ]
         else:
             # Include current summary and ask for updated summary + feedback
-            current_summary_text = self._current_summary if self._current_summary else "No previous summary available."
             parts = [
-                "You are a Context Manager that provides both feedback and maintains a structured running summary.",
-                "Analyze a solver's previous attempt at a code problem and its unit test results. Provide ONLY feedback and analysis — absolutely DO NOT provide any code, pseudocode, or code-like snippets.",
-
+                f"Analyze a solver's previous attempt at a code problem and its unit test results. Provide ONLY feedback and analysis on how the solver can correct their solution. Absolutely DO NOT provide any code, pseudocode, or code-like snippets.",
                 f"\nProblem:\n{problem}",
-
                 f"\nRound {round_idx}:",
-
-                f"\n**Current Summary (running log of all attempts so far):**\n{current_summary_text}",
-
                 f"\n**Latest Attempt:**\n{last_solver_output}",
-
                 f"\n**Latest Test Results:**\n{last_verifier_results}",
-
-                "\n**Your Response MUST Include ONLY:**",
-                "1. **Summary**: Update the running memory of the solver's attempts by adding a new entry for this round. Each entry should include:",
-                "   - Attempt number",
-                "   - What the solver tried (at a high level, no code)",
-                "   - Outcome of the attempt (errors fixed or new issues)", 
-                "   - Any causal insight (e.g., 'fix resolved X but revealed Y').",
-                "   Keep the summary concise but cumulative, so it reflects the progression of all attempts so far.",
-                "2. **Feedback**: Provide specific, actionable feedback on how the solver can improve, without writing or suggesting code.",
-                "3. **Analysis**: Identify patterns or root causes across all attempts so far (e.g., recurring mistakes, signs of progress, shifts in error type).",
-
-                "\n**Format your response with clear sections:**",
-                "## Summary\n[Updated running summary including this attempt — no code]",
-                "## Analysis\n[Pattern analysis and root cause identification — no code]", 
-                "## Feedback\n[Specific, actionable guidance for the solver — no code]",
+                f"\n**Latest Feedback:**\n{last_feedback}",
+                f"\n**Your Response Should Include ONLY:**",
+                f"- Clear explanation of mistakes or misunderstandings.",
+                f"- Guidance on what needs to change conceptually.", 
+                f"- High-level reasoning about why the solution failed and what to improve.",
             ]
+            # current_summary_text = self._current_summary if self._current_summary else "No previous summary available."
+            # parts = [
+            #     "You are a Context Manager that provides both feedback and maintains a structured running summary.",
+            #     "Analyze a solver's previous attempt at a code problem and its unit test results. Provide ONLY feedback and analysis — absolutely DO NOT provide any code, pseudocode, or code-like snippets.",
+
+            #     f"\nProblem:\n{problem}",
+
+            #     f"\nRound {round_idx}:",
+
+            #     f"\n**Current Summary (running log of all attempts so far):**\n{current_summary_text}",
+
+            #     f"\n**Latest Attempt:**\n{last_solver_output}",
+
+            #     f"\n**Latest Test Results:**\n{last_verifier_results}",
+
+            #     "\n**Your Response MUST Include ONLY:**",
+            #     "1. **Summary**: Update the running memory of the solver's attempts by adding a new entry for this round. Each entry should include:",
+            #     "   - Attempt number",
+            #     "   - What the solver tried (at a high level, no code)",
+            #     "   - Outcome of the attempt (errors fixed or new issues)", 
+            #     "   - Any causal insight (e.g., 'fix resolved X but revealed Y').",
+            #     "   Keep the summary concise but cumulative, so it reflects the progression of all attempts so far.",
+            #     "2. **Feedback**: Provide specific, actionable feedback on how the solver can improve, without writing or suggesting code.",
+            #     "3. **Analysis**: Identify patterns or root causes across all attempts so far (e.g., recurring mistakes, signs of progress, shifts in error type).",
+
+            #     "\n**Format your response with clear sections:**",
+            #     "## Summary\n[Updated running summary including this attempt — no code]",
+            #     "## Analysis\n[Pattern analysis and root cause identification — no code]", 
+            #     "## Feedback\n[Specific, actionable guidance for the solver — no code]",
+            # ]
 
         obs = "\n\n".join([p for p in parts if p])
         return obs
