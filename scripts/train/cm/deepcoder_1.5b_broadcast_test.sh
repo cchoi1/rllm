@@ -1,9 +1,3 @@
-source /scratch/m000123/miniconda3/etc/profile.d/conda.sh
-conda activate /scratch/m000123/envs/rllm 
-set -a
-. ~/rllm/.env
-set +a
-
 # --- vLLM / torch env
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:False"
@@ -14,6 +8,9 @@ export CUDA_DEVICE_ORDER=PCI_BUS_ID
 export HYDRA_FULL_ERROR=1
 
 RLLM_DIR=$(python3 -c "import rllm; import os; print(os.path.dirname(os.path.dirname(rllm.__file__)))")
+# RLLM_DIR="~/rllm"
+echo $RLLM_DIR
+cd $RLLM_DIR
 
 # ------------------------------
 # Config
@@ -27,7 +24,7 @@ mkdir -p "$RUN_DIR"
 ENDPOINT_FILE=/scratch/m000123/vllm_endpoint.txt
 
 # Fallback hostname if file isn't present
-FALLBACK_HOST="n02.marlowe.stanford.edu"
+FALLBACK_HOST="n09.marlowe.stanford.edu"
 FALLBACK_PORT=12345
 
 if [[ -f "$ENDPOINT_FILE" ]]; then
@@ -67,6 +64,7 @@ curl -sS -H "Content-Type: application/json" \
 echo
 
 NUM_GPUS=4
+export CUDA_VISIBLE_DEVICES=0,1,2,3
 
 python3 -m examples.context_manager.train_cm \
     agent.max_steps=4 \

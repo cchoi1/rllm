@@ -35,7 +35,7 @@ class Solver:
                  temperature: float = 0.2,
                  remote_url: str = "http://localhost:12345/v1",
                  remote_api_key: str = "None",
-                 timeout: float = 30.0,
+                 timeout: float = 600.0,
                  max_retries: int = 3):
         
         self.model_name = model_name
