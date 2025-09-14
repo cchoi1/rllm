@@ -1,12 +1,14 @@
 import json
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional, Tuple
 
-import hashlib
-import asyncio
-from typing import Any, Optional, Dict, Tuple
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
-from rllm.rewards.reward_types import RewardConfig, RewardOutput, RewardType
+from rllm.agents.context_manager_agent import _format_verifier_results
 from rllm.rewards.code_reward import (
     extract_code_from_model,
     clean_code_main_block,
@@ -15,447 +17,502 @@ from rllm.rewards.code_reward import (
     leetcode_check_correctness,
     kodcode_check_correctness,
     humanevalplus_check_correctness,
-    codetool_check_correctness,
 )
-from rllm.tools.code_tools.together_tool import TogetherCodeTool  # optional
+from rllm.rewards.reward_types import RewardConfig, RewardOutput, RewardType
 
-from rllm.client.llm_client import LLMClient, LLMClientType
-from rllm.data.utils import fetch_live_code_bench_system_prompt
-from rllm.agents.context_manager_agent import _format_verifier_results
-
-
-# class Solver:
-#     """
-#     Wraps a code generation model using LLMClient for remote vLLM server calls.
-#     Must implement: generate(problem, feedback, extra)
-#     """
-#     def __init__(self,
-#                  model_name: str,
-#                  max_tokens: int = 1024,
-#                  temperature: float = 0.2,
-#                  remote_url: str = "http://localhost:12345/v1",
-#                  remote_api_key: str = "None",
-#                  timeout: float = 600.0,
-#                  max_retries: int = 3):
-        
-#         self.model_name = model_name
-#         self.remote_url = remote_url.rstrip("/")
-#         self.remote_api_key = remote_api_key
-#         self.timeout = timeout
-#         self.max_retries = max_retries
-#         self.temperature = temperature
-#         self.max_tokens = max_tokens
-#         self.llm_client = None
-    
-#     def _get_client(self):
-#         if self.llm_client is None:
-#             self.llm_client = LLMClient(
-#                 llm_client_type=LLMClientType.OpenAI,
-#                 llm_name=self.model_name,
-#                 llm_server_url=self.remote_url,
-#                 llm_server_api_key=self.remote_api_key,
-#                 temperature=self.temperature,
-#                 max_tokens=self.max_tokens,
-#                 timeout=self.timeout,
-#             )
-#         return self.llm_client
-    
-#     @staticmethod
-#     def _build_prompt(problem: str,
-#                      feedback: Optional[str] = None,
-#                      prev_attempts: list[dict[str, Any]] = None) -> str:
-#         """prev_attempts is a list of dictionaries with the following keys:
-#             - round_idx: the round number
-#             - feedback: the feedback string
-#             - solver_code: the solver code
-#             - results: unit test results of solver_code
-#         """
-#         parts = []
-#         parts.append(problem)
-        
-#         if prev_attempts:
-#             last = prev_attempts[-1]
-#             formatted_results = _format_verifier_results(last.get("verifier_results", {}))
-#             # Prefer raw model output (reasoning + code), fall back to code only
-#             last_attempt_txt = last.get("solver_full_output") or last.get("solver_output") or ""
-#             parts.append("\nPrevious attempt (for reference; DO NOT copy):\n")
-#             parts.append(last_attempt_txt.strip())
-#             parts.append("\nUnit test results summary:\n")
-#             parts.append(formatted_results.strip())
-
-#         if feedback:
-#             parts.append(
-#                 "\nYour previous attempt was incorrect. For your next solution, apply the following guidance:\n"
-#             )
-#             parts.append(feedback.strip())
-        
-#         prompt = "\n".join(parts)
-#         return prompt
-
-#     async def generate_async(self, problem: str, feedback: Optional[str], prev_attempts: list[dict[str, Any]] = None) -> tuple[str, str]:
-#         prompt = self._build_prompt(problem, feedback, prev_attempts)
-#         messages = [{"role": "user", "content": prompt}]
-#         last_err = None
-#         client = self._get_client()
-#         for attempt in range(self.max_retries):
-#             try:
-#                 text, finish_reason = await client.generate(messages)
-#                 return text, prompt
-#             except Exception as e:
-#                 last_err = e
-#                 if attempt < self.max_retries - 1:
-#                     await asyncio.sleep(1.0 * (2 ** attempt))  # Exponential backoff
-#                 else:
-#                     break
-#         print(f"Warning: Failed to generate from remote server after {self.max_retries} attempts: {last_err}")
-#         return "", prompt
-    
-#     def generate(self, problem: str, feedback: Optional[str], prev_attempts: list[dict[str, Any]] = None) -> tuple[str, str]:
-#         return asyncio.run(self.generate_async(problem, feedback, prev_attempts))
-
-
-# cm_reward.py (add near the top)
-from typing import Any, Optional, Dict, Tuple
-
-# vLLM imports (works with vLLM >= 0.4.x)
+# -------------------------------
+# Optional Together Code Tool
+# -------------------------------
 try:
-    from vllm import LLM, SamplingParams
-except ImportError:
-    LLM = None
+    from rllm.tools.code_tools.together_tool import TogetherCodeTool  # optional
+    _HAS_TCI = True
+except Exception:
+    _HAS_TCI = False
 
-class InprocessVLLMSolver:
-    """
-    Uses vLLM's Python API inside the reward worker process.
-    No HTTP. The engine is created once and reused.
-    """
-    def __init__(self,
-                 model_name: str,
-                 max_tokens: int = 1024,
-                 temperature: float = 0.2,
-                 max_model_len: Optional[int] = None,
-                 tensor_parallel_size: int = 1,
-                 gpu_memory_utilization: float = 0.85,
-                 dtype: str = "auto"):
-        if LLM is None:
-            raise RuntimeError("vLLM not installed in this env. `pip install vllm`")
 
-        self.model_name = model_name
-        self.max_tokens = max_tokens
-        self.temperature = temperature
+def _build_chat_url(base_url: str) -> str:
+    base = base_url.rstrip('/')
+    # if base already ends with /v{number}, don't add another /v1
+    if re.search(r'/v\d+$', base):
+        return f"{base}/chat/completions"
+    return f"{base}/v1/chat/completions"
 
-        # Lazy init to play nice with Ray serialization
-        self._engine = None
-        self._params = None
-        self._engine_kwargs = dict(
-            model=self.model_name,
-            tensor_parallel_size=tensor_parallel_size,
-            gpu_memory_utilization=gpu_memory_utilization,
-            trust_remote_code=True,
+
+_SESSION = requests.Session()
+_RETRY = Retry(
+    total=3, connect=3, read=3,
+    backoff_factor=1.5,
+    status_forcelist=(500, 502, 503, 504),
+    allowed_methods=frozenset(["POST"])
+)
+_SESSION.mount("http://", HTTPAdapter(max_retries=_RETRY))
+_SESSION.mount("https://", HTTPAdapter(max_retries=_RETRY))
+
+
+# -------------------------------
+# prompt builder (keeps old behavior)
+# -------------------------------
+def build_solver_prompt(
+    problem: str,
+    feedback: Optional[str],
+    prev_attempts: Optional[List[Dict[str, Any]]],
+) -> str:
+    parts = [problem or ""]
+    if prev_attempts:
+        last = prev_attempts[-1]
+        formatted = _format_verifier_results(last.get("verifier_results", {}))
+        last_attempt_txt = last.get("solver_full_output") or last.get("solver_output") or ""
+        parts.append("\nPrevious attempt (for reference; DO NOT copy):\n")
+        parts.append(last_attempt_txt.strip())
+        parts.append("\nUnit test results summary:\n")
+        parts.append(formatted.strip())
+    if feedback and feedback.strip():
+        parts.append(
+            "\nYour previous attempt was incorrect. For your next solution, apply the following guidance:\n"
         )
-        if max_model_len is not None:
-            self._engine_kwargs["max_model_len"] = max_model_len
-        if dtype is not None:
-            self._engine_kwargs["dtype"] = dtype
-
-    def _ensure_engine(self):
-        if self._engine is None:
-            self._engine = LLM(**self._engine_kwargs)
-            self._params = SamplingParams(
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
-            )
-
-    @staticmethod
-    def _build_prompt(problem: str,
-                      feedback: Optional[str] = None,
-                      prev_attempts: list[dict[str, Any]] = None) -> str:
-        parts = [problem]
-        if prev_attempts:
-            from rllm.agents.context_manager_agent import _format_verifier_results
-            last = prev_attempts[-1]
-            formatted_results = _format_verifier_results(last.get("verifier_results", {}))
-            last_attempt_txt = last.get("solver_full_output") or last.get("solver_output") or ""
-            parts.append("\nPrevious attempt (for reference; DO NOT copy):\n")
-            parts.append(last_attempt_txt.strip())
-            parts.append("\nUnit test results summary:\n")
-            parts.append(formatted_results.strip())
-        if feedback:
-            parts.append("\nYour previous attempt was incorrect. For your next solution, apply the following guidance:\n")
-            parts.append(feedback.strip())
-        return "\n".join(parts)
-
-    def generate(self, problem: str, feedback: Optional[str], prev_attempts: list[dict[str, Any]] = None) -> tuple[str, str]:
-        self._ensure_engine()
-        prompt = self._build_prompt(problem, feedback, prev_attempts)
-        outs = self._engine.generate([prompt], self._params, use_tqdm=False)
-        text = outs[0].outputs[0].text if outs and outs[0].outputs else ""
-        return text, prompt
+        parts.append(feedback.strip())
+    return "\n".join(parts)
 
 
-class RewardContextAssistFn:
-    """
-    Train the ContextManager (action = feedback string) by checking if a separate Solver,
-    when given this feedback, can now produce correct code.
+# -------------------------------
+# HTTP chat (non-streaming)
+# -------------------------------
+# def _http_chat_once(
+#     base_url: str,
+#     model: str,
+#     prompt: str,
+#     api_key: Optional[str] = None,
+#     gen_cfg: Optional[Dict[str, Any]] = None,
+#     timeout_s: float = 600.0,
+# ) -> str:
+#     headers = {"Content-Type": "application/json"}
+#     if api_key and api_key not in ("EMPTY", "None", None):
+#         headers["Authorization"] = f"Bearer {api_key}"
 
-    Reward modes:
-      - binary: 1.0 if Solver passes, 0.0 otherwise
-      - marginal: +1 only if feedback improves over baseline (no-feedback)
-      - fractional: pass ratio (e.g., passed_tests/total_tests) as shaping
-    """
+#     payload = {
+#         "model": model,
+#         "messages": [{"role": "user", "content": prompt}],
+#         "stream": False,  # IMPORTANT: non-streaming to avoid ContentLength/partial-body issues
+#     }
 
-    def __init__(self,
-                 config: RewardConfig,
-                 solver_args: dict,
-                 use_marginal_improvement: bool = True,
-                 use_together_code_interpreter: bool = False):
-        self.config = config
-        # self.solver = Solver(**solver_args)
-        self.solver = InprocessVLLMSolver(
-            model_name=solver_args.get("model_name"),
-            max_tokens=solver_args.get("max_tokens", 1024),
-            temperature=solver_args.get("temperature", 0.2),
-            max_model_len=solver_args.get("max_model_len"),          # important for long CoT
-            tensor_parallel_size=solver_args.get("tensor_parallel_size", 1),
-            gpu_memory_utilization=solver_args.get("gpu_memory_utilization", 0.85),
-            dtype=solver_args.get("dtype", "auto"),
-        )
-        self.use_marginal = use_marginal_improvement
-        self.use_tci = use_together_code_interpreter
+#     # Normalize generation params (support either key naming)
+#     if gen_cfg:
+#         norm = dict(gen_cfg)
+#         if "max_new_tokens" in norm and "max_tokens" not in norm:
+#             norm["max_tokens"] = norm.pop("max_new_tokens")
+#         payload.update({k: v for k, v in norm.items() if v is not None})
 
-    # ---- helpers to evaluate solver code (direct evaluators; Option A) ----
-    def _eval_code(self, dataset_name: str, tests: Any, code: str) -> Tuple[bool, Dict[str, Any]]:
-        if code is None:
-            return False, {"error": "no code extracted from solver output"}
+#     resp = requests.post(
+#         _build_chat_url(base_url),
+#         headers=headers,
+#         json=payload,
+#         timeout=timeout_s,
+#     )
+#     resp.raise_for_status()
+#     data = resp.json()
+#     return data["choices"][0]["message"]["content"]
 
-        if dataset_name in ["taco", "apps", "code_contests"]:
-            if self.use_tci:
-                codetool = TogetherCodeTool()
-                return codetool_check_correctness(tests, code, codetool, is_taco_format=True)
-            else:
-                lcb_tests = taco_to_lcb_format(tests)
-                return lcb_check_correctness_v2(lcb_tests, code, debug=False)
-
-        if dataset_name == "leetcode":
-            return leetcode_check_correctness(tests, code)
-
-        if dataset_name in ["livecodebench", "codeforces", "primeintellect"]:
-            if isinstance(tests, str):
-                tests = json.loads(tests)
-            return lcb_check_correctness_v2(tests, code, debug=False)
-
-        if dataset_name == "kodcode":
-            return kodcode_check_correctness(tests, code)
-
-        if dataset_name == "humanevalplus":
-            return humanevalplus_check_correctness(tests, code)
-
-        return False, {"error": f"Dataset {dataset_name} not implemented in context assist reward"}
-
-
-    def _extract_solver_code(self, solver_text: str) -> Optional[str]:
-        code = extract_code_from_model(solver_text)
-        if code:
-            code = clean_code_main_block(code)
-        return code
-
-    # ---- main entrypoint (RewardFunction protocol) ----
-    def __call__(self, task_info: dict, action: str, prev_attempts: list[dict[str, Any]] = None) -> RewardOutput:
-        """
-        task_info:
-          {
-            "problem": <str>,
-            "problem_type": RewardType.CODE,
-            "data_source": <dataset_name>,
-          }
-
-        action: the ContextManager feedback string
-        """
-        dataset_name = task_info.get("data_source", "")
-        problem = task_info.get("problem", "")
-        tests = task_info.get("ground_truth", None)
-
-        if not tests or not isinstance(problem, str) or not problem.strip():
-            return RewardOutput(
-                reward=self.config.format_error_reward,
-                is_correct=False,
-                metadata={"error": "Missing question/tests for context assist reward."}
-            )
-
-        # Extract baseline from previous attempts (first attempt)
-        baseline_passed = None
-        baseline_results = None
-        baseline_code = None
-        baseline_solver_output = None
-        
-        if prev_attempts and len(prev_attempts) > 0:
-            first_attempt = prev_attempts[0]
-            baseline_passed = first_attempt.get("passed", False)
-            baseline_results = first_attempt.get("results", {})
-            baseline_code = first_attempt.get("code", "")
-            baseline_solver_output = first_attempt.get("solver_output", "")
-
-        if not action or not action.strip():
-            # No feedback provided, compute baseline if not available
-            if baseline_passed is None:
-                solver_output, solver_prompt = self.solver.generate(problem=problem, feedback=None)
-                code = self._extract_solver_code(solver_output)
-                passed, results = self._eval_code(dataset_name, tests, code)
-                baseline_passed, baseline_results = passed, results
-                baseline_code, baseline_solver_output = code, solver_output
-            else:
-                passed, results = baseline_passed, baseline_results
-                code = baseline_code
-                solver_output = baseline_solver_output
-                # For baseline, we need to generate the prompt that was used
-                solver_prompt = self.solver._build_prompt(problem=problem, feedback=None, prev_attempts=prev_attempts)
-                
-            final_reward = 1.0 if passed else 0.0
-            meta = {
-                "initial_passed": passed,
-                "initial_results": results,
-                "initial_solver_code": code,
-                "initial_solver_output": solver_output,
-                "initial_solver_prompt": solver_prompt,
-                "retry_passed": None,
-                "retry_results": None,
-                "retry_solver_code": None,
-                "retry_solver_output": None,
-                "retry_solver_prompt": None
-            }
-        else:
-            # Feedback provided, compute retry with feedback
-            solver_output, solver_prompt = self.solver.generate(problem=problem, feedback=action, prev_attempts=prev_attempts)
-            code = self._extract_solver_code(solver_output)
-            passed, results = self._eval_code(dataset_name, tests, code)
-
-            # ---------- reward shaping ----------
-            reward_binary = 1.0 if passed else 0.0
-
-            frac_reward = None
-
-            if self.use_marginal and baseline_passed is not None:
-                if passed and not baseline_passed:
-                    final_reward = 1.0
-                elif passed and baseline_passed:
-                    final_reward = 1.0
-                else:
-                    final_reward = 0.0
-            else:
-                final_reward = reward_binary
-
-            meta = {
-                "initial_passed": baseline_passed,
-                "initial_results": baseline_results,
-                "initial_solver_code": baseline_code,
-                "initial_solver_output": baseline_solver_output,
-                "initial_solver_prompt": self.solver._build_prompt(problem=problem, feedback=None, prev_attempts=prev_attempts),
-                "retry_passed": passed,
-                "retry_results": results,
-                "retry_solver_code": code,
-                "retry_solver_output": solver_output,
-                "retry_solver_prompt": solver_prompt
-            }
-
-        return RewardOutput(
-            reward=float(final_reward if passed else self.config.incorrect_reward if not self.use_marginal else final_reward),
-            is_correct=bool(passed),
-            metadata=meta,
-        )
-
-
-def rllm_reward_fn_context_assist(data_source: str,
-                                  feedback: str,
-                                  ground_truth: dict,
-                                  problem: str,
-                                  prev_attempts: list[dict[str, Any]] = None,
-                                  **kwargs):
-    """
-    Convenience wrapper if you want a function-style entry (mirrors rllm_reward_fn_code).
-    """
-    reward_config = RewardConfig()
-    
-    # Extract solver configuration from kwargs
-    solver_model_path = kwargs.get("solver_model_path", "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B")
-    gen_params = kwargs.get("gen", {})
-    remote_url = kwargs.get("remote_url", "http://localhost:12345/v1")
-    remote_api_key = kwargs.get("remote_api_key", "None")
-    use_marginal_improvement = kwargs.get("use_marginal_improvement", True)
-    use_together_code_interpreter = kwargs.get("use_together_code_interpreter", False)
-    
-    # Create solver arguments dictionary
-    solver_args = {
-        "model_name": solver_model_path,
-        "max_tokens": gen_params.get("max_new_tokens", 1024),
-        "temperature": gen_params.get("temperature", 0.2),
-        "remote_url": remote_url,
-        "remote_api_key": remote_api_key,
-    }
-    
-    reward_fn = RewardContextAssistFn(
-        reward_config,
-        solver_args=solver_args,
-        use_marginal_improvement=use_marginal_improvement,
-        use_together_code_interpreter=use_together_code_interpreter,
+def _http_chat_once(
+    base_url: str,
+    model: str,
+    prompt: str,
+    api_key: Optional[str] = None,
+    gen_cfg: Optional[Dict[str, Any]] = None,
+    timeout_s: float = 600.0,
+) -> str:
+    # Per-call session with retry (safe drop-in; you can hoist to a module-global Session if you prefer)
+    session = requests.Session()
+    retry = Retry(
+        total=3, connect=3, read=3,
+        backoff_factor=1.5,
+        status_forcelist=(500, 502, 503, 504),
+        allowed_methods=frozenset(["POST"]),
+        raise_on_status=False,
     )
-    task_info = {
-        "problem": problem,
-        "problem_type": RewardType.CODE,
-        "data_source": data_source,
-        "ground_truth": ground_truth,
-        "previous_solution": kwargs.get("previous_solution"),
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+
+    headers = {
+        "Content-Type": "application/json",
+        "Connection": "close",  # avoid flaky long-lived keep-alive sockets
     }
-    return reward_fn(task_info, feedback, prev_attempts)
+    if api_key and api_key not in ("EMPTY", "None", None):
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    # Normalize generation params & keep response predictable
+    payload: Dict[str, Any] = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,  # single JSON (no SSE)
+        "n": 1,
+    }
+    if gen_cfg:
+        norm = dict(gen_cfg)
+        if "max_new_tokens" in norm and "max_tokens" not in norm:
+            norm["max_tokens"] = norm.pop("max_new_tokens")
+        # Only include non-None values
+        for k, v in norm.items():
+            if v is not None:
+                payload[k] = v
+    # Sensible defaults if not provided
+    payload.setdefault("temperature", 0.0)
+    payload.setdefault("max_tokens", 1024)
+
+    url = _build_chat_url(base_url)
+    try:
+        # Separate connect/read timeouts helps diagnose slow servers
+        resp = session.post(url, headers=headers, json=payload, timeout=(10, timeout_s))
+        resp.raise_for_status()
+        data = resp.json()  # can raise ValueError if body is truncated/invalid
+    except Exception:
+        # Let caller's retry/backoff wrapper handle this
+        raise
+
+    choices = data.get("choices")
+    if not choices or "message" not in choices[0] or "content" not in choices[0]["message"]:
+        preview = (str(data)[:300] + "...") if not isinstance(data, str) else data[:300] + "..."
+        raise RuntimeError(f"Unexpected response schema from solver at {url}. Preview: {preview}")
+
+    return choices[0]["message"]["content"]
 
 
-if __name__ == "__main__":
-    import json
-    import argparse
-    from rllm.data.dataset import DatasetRegistry
-    
-    print("Loading dataset...")
-    test_dataset = DatasetRegistry.load_dataset("lcb", "test")
-    if test_dataset is None:
-        print("Dataset not found, preparing dataset...")
-        from prepare_deepcoder_data import prepare_deepcoder_data
-        _, test_dataset = prepare_deepcoder_data()
-    tasks = test_dataset.get_data()
-
-    # Test on first task only
-    if tasks:
-        task = tasks[0]
-        print(f"Testing on task: {task.get('question', task.get('problem', ''))[:100]}...")
-        
-        # Create task_info for the reward function
-        task_info = {
-            "problem": task.get("question", task.get("problem", "")),
-            "data_source": "livecodebench",
-            "ground_truth": task.get("ground_truth", ""),
-        }
-        
-        feedback = "Consider the edge cases more carefully."
-        
+def _chat_with_retries(
+    base_url: str,
+    model: str,
+    prompt: str,
+    api_key: Optional[str],
+    gen_cfg: Dict[str, Any],
+    max_retries: int,
+    base_delay: float,
+    timeout_s: float,
+) -> Optional[str]:
+    last_err = None
+    for attempt in range(max_retries):
         try:
-            # Test rllm_reward_fn_context_assist with solver arguments
-            reward = rllm_reward_fn_context_assist(
-                data_source="livecodebench",
-                feedback=feedback,
-                ground_truth=task.get("ground_truth", ""),
-                problem=task.get("question", task.get("problem", "")),
-                prev_attempts=[],  # No previous attempts for this test
-                solver_model_path="deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
-                remote_url="http://localhost:12345/v1",
-                remote_api_key="None",
-                gen={
-                    "max_new_tokens": 32768,
-                    "temperature": 0.2
-                }
+            return _http_chat_once(
+                base_url=base_url,
+                model=model,
+                prompt=prompt,
+                api_key=api_key,
+                gen_cfg=gen_cfg,
+                timeout_s=timeout_s,
             )
-            print(f"Reward: {reward.reward}")
-            print(f"Correct: {reward.is_correct}")
-            print(f"Metadata: {reward.metadata}")
         except Exception as e:
-            print(f"Error testing reward function: {e}")
-            import traceback
-            traceback.print_exc()
+            last_err = e
+            if attempt < max_retries - 1:
+                time.sleep(base_delay * (2 ** attempt))
+    print(f"[cm_reward] HTTP chat failed after {max_retries} retries: {last_err}")
+    return None
+
+
+# -------------------------------
+# Dataset-specific evaluation
+# -------------------------------
+def _eval_code(
+    dataset_name: str,
+    tests: Any,
+    code: Optional[str],
+    use_tci: bool = False,
+) -> Tuple[bool, Dict[str, Any]]:
+    if not code:
+        return False, {"error": "no code extracted from solver output"}
+
+    # Prefer TCI for TACo/APPS/CodeContests if requested and available
+    if dataset_name in ["taco", "apps", "code_contests"] and use_tci and _HAS_TCI:
+        codetool = TogetherCodeTool()
+        from rllm.rewards.code_reward import codetool_check_correctness
+        return codetool_check_correctness(tests, code, codetool, is_taco_format=True)
+
+    if dataset_name in ["taco", "apps", "code_contests"]:
+        lcb_tests = taco_to_lcb_format(tests)
+        return lcb_check_correctness_v2(lcb_tests, code, debug=False)
+
+    if dataset_name == "leetcode":
+        return leetcode_check_correctness(tests, code)
+
+    if dataset_name in ["livecodebench", "codeforces", "primeintellect"]:
+        tests = json.loads(tests) if isinstance(tests, str) else tests
+        return lcb_check_correctness_v2(tests, code, debug=False)
+
+    if dataset_name == "kodcode":
+        return kodcode_check_correctness(tests, code)
+
+    if dataset_name == "humanevalplus":
+        return humanevalplus_check_correctness(tests, code)
+
+    return False, {"error": f"Dataset {dataset_name} not implemented in context assist reward"}
+
+
+def _extract_code(text: str) -> Optional[str]:
+    code = extract_code_from_model(text)
+    if code:
+        code = clean_code_main_block(code)
+    return code
+
+
+def _pass_fraction(details: Dict[str, Any]) -> Optional[float]:
+    """
+    Try to extract a fractional pass metric from details if available.
+    Falls back to None if not available.
+    """
+    # Common patterns you may produce in your evaluators:
+    for k_total, k_pass in [
+        ("n_total", "n_passed"),
+        ("total", "passed"),
+        ("num_total", "num_passed"),
+    ]:
+        if isinstance(details, dict) and k_total in details and k_pass in details:
+            try:
+                total = float(details[k_total])
+                passed = float(details[k_pass])
+                if total > 0:
+                    return passed / total
+            except Exception:
+                pass
+    return None
+
+
+# -------------------------------
+# Core scorer (single sample)
+# -------------------------------
+def _score_one_sample(
+    data_source: str,
+    feedback: Optional[str],
+    ground_truth: Any,
+    extra_info: Dict[str, Any],
+    http_cfg: Dict[str, Any],
+    use_marginal_improvement: bool,
+    fractional_shaping: bool,
+    use_tci: bool,
+) -> Tuple[float, bool, Dict[str, Any]]:
+    """
+    Computes reward for a single sample with optional baseline/marginal logic.
+    Returns: (reward, is_correct, metadata)
+    """
+    # Unpack config
+    base_url = http_cfg["base_url"]
+    model_name = http_cfg["model_name"]
+    api_key = http_cfg.get("api_key")
+    gen_cfg = http_cfg.get("gen", {"max_tokens": 1024, "temperature": 0.0})
+    timeout_s = float(http_cfg.get("timeout_s", 120.0))
+    max_retries = int(http_cfg.get("max_retries", 3))
+    base_delay = float(http_cfg.get("base_delay", 2.0))
+
+    # Extract problem/attempts
+    problem = (
+        extra_info.get("problem")
+        or extra_info.get("question")
+        or extra_info.get("prompt")
+        or ""
+    )
+    prev_attempts = extra_info.get("prev_attempts") or []
+
+    # Try to pull a baseline from prev_attempts (first attempt)
+    baseline_passed = None
+    baseline_details = None
+    baseline_code = None
+    baseline_solver_output = None
+
+    if prev_attempts:
+        first = prev_attempts[0]
+        baseline_passed = first.get("passed", None)
+        baseline_details = first.get("results", None)
+        baseline_code = first.get("code", None)
+        baseline_solver_output = first.get("solver_output", None)
+
+    # If no feedback, compute/return baseline reward
+    if not feedback or not str(feedback).strip():
+        if baseline_passed is None:
+            # Need to compute a baseline by calling solver w/o feedback
+            prompt0 = build_solver_prompt(problem, None, prev_attempts)
+            text0 = _chat_with_retries(
+                base_url, model_name, prompt0, api_key, gen_cfg, max_retries, base_delay, timeout_s
+            )
+            if text0 is None:
+                return 0.0, False, {"error": "baseline HTTP call failed"}
+            baseline_solver_output = text0
+            baseline_code = _extract_code(text0)
+            baseline_passed, baseline_details = _eval_code(data_source, ground_truth, baseline_code, use_tci)
+        # Reward is just binary baseline
+        reward = 1.0 if baseline_passed else 0.0
+        return reward, bool(baseline_passed), {
+            "initial_passed": baseline_passed,
+            "initial_results": baseline_details,
+            "initial_solver_code": baseline_code,
+            "initial_solver_output": baseline_solver_output,
+            "initial_solver_prompt": build_solver_prompt(problem, None, prev_attempts),
+            "retry_passed": None,
+            "retry_results": None,
+            "retry_solver_code": None,
+            "retry_solver_output": None,
+            "retry_solver_prompt": None,
+        }
+
+    # With feedback: compute retry
+    retry_prompt = build_solver_prompt(problem, feedback, prev_attempts)
+    retry_text = _chat_with_retries(
+        base_url, model_name, retry_prompt, api_key, gen_cfg, max_retries, base_delay, timeout_s
+    )
+    if retry_text is None:
+        return 0.0, False, {"error": "retry HTTP call failed"}
+
+    retry_code = _extract_code(retry_text)
+    retry_passed, retry_details = _eval_code(data_source, ground_truth, retry_code, use_tci)
+    reward_binary = 1.0 if retry_passed else 0.0
+
+    # fractional shaping if available
+    frac_reward = _pass_fraction(retry_details) if fractional_shaping else None
+    if frac_reward is not None:
+        reward_shaped = frac_reward
     else:
-        print("No tasks found in dataset")
+        reward_shaped = reward_binary
+
+    if use_marginal_improvement and baseline_passed is not None:
+        # Reward only if we matched or improved from baseline
+        if retry_passed and not baseline_passed:
+            final_reward = 1.0
+        elif retry_passed and baseline_passed:
+            final_reward = 1.0
+        else:
+            final_reward = 0.0
+    else:
+        final_reward = reward_shaped
+
+    meta = {
+        "initial_passed": baseline_passed,
+        "initial_results": baseline_details,
+        "initial_solver_code": baseline_code,
+        "initial_solver_output": baseline_solver_output,
+        "initial_solver_prompt": build_solver_prompt(problem, None, prev_attempts),
+        "retry_passed": retry_passed,
+        "retry_results": retry_details,
+        "retry_solver_code": retry_code,
+        "retry_solver_output": retry_text,
+        "retry_solver_prompt": retry_prompt,
+    }
+    return float(final_reward), bool(retry_passed), meta
+
+
+# -------------------------------
+# PUBLIC: single-sample API (keeps old signature/semantics)
+# -------------------------------
+def rllm_reward_fn_context_assist(
+    data_source: str,
+    feedback: str,
+    ground_truth: Any,
+    problem: str,
+    prev_attempts: Optional[List[Dict[str, Any]]] = None,
+    **kwargs,
+) -> RewardOutput:
+    """
+    Remote-solver version of your old single-sample entrypoint.
+    kwargs:
+      - base_url, model_name, api_key
+      - gen (temperature, max_tokens / max_new_tokens)
+      - timeout_s, max_retries, base_delay
+      - use_marginal_improvement (bool)
+      - fractional_shaping (bool)
+      - use_together_code_interpreter (bool)
+    """
+    cfg = RewardConfig()
+    http_cfg = {
+        "base_url": kwargs.get("base_url", kwargs.get("remote_url", "http://localhost:12345/v1")),
+        "model_name": kwargs.get("model_name", kwargs.get("solver_model_path", "genrm-demo")),
+        "api_key": kwargs.get("api_key", kwargs.get("remote_api_key", "EMPTY")),
+        "gen": kwargs.get("gen", {"max_tokens": 1024, "temperature": 0.0}),
+        "timeout_s": kwargs.get("timeout_s", 600.0),
+        "max_retries": kwargs.get("max_retries", 3),
+        "base_delay": kwargs.get("base_delay", 2.0),
+    }
+    use_marginal = bool(kwargs.get("use_marginal_improvement", True))
+    fractional = bool(kwargs.get("fractional_shaping", False))
+    use_tci = bool(kwargs.get("use_together_code_interpreter", False))
+
+    reward, is_correct, meta = _score_one_sample(
+        data_source=data_source,
+        feedback=feedback,
+        ground_truth=ground_truth,
+        extra_info={"problem": problem, "prev_attempts": prev_attempts or []},
+        http_cfg=http_cfg,
+        use_marginal_improvement=use_marginal,
+        fractional_shaping=fractional,
+        use_tci=use_tci,
+    )
+
+    # Preserve your old "incorrect_reward" behavior for single-sample if wanted
+    if not is_correct and not use_marginal:
+        reward = float(cfg.incorrect_reward)
+
+    return RewardOutput(
+        reward=float(reward),
+        is_correct=bool(is_correct),
+        metadata=meta,
+    )
+
+
+# -------------------------------
+# PUBLIC: batch API (VERL PPO uses this)
+# -------------------------------
+def rllm_reward_fn_context_assist_batch(
+    data_sources: List[str],
+    solution_strs: List[str],      # <-- treat as feedback strings (actions)
+    ground_truths: List[Any],
+    extra_infos: List[Dict[str, Any]],
+    **kwargs,
+) -> List[float]:
+    """
+    Batch scorer compatible with VERL's reward_manager=batch.
+    kwargs:
+      - base_url, model_name, api_key
+      - gen (temperature, max_tokens / max_new_tokens)
+      - timeout_s, max_retries, base_delay, max_workers
+      - use_marginal_improvement (bool)
+      - fractional_shaping (bool)
+      - use_together_code_interpreter (bool)
+    """
+    http_cfg = {
+        "base_url": kwargs.get("base_url", kwargs.get("remote_url", "http://localhost:12345/v1")),
+        "model_name": kwargs.get("model_name", kwargs.get("solver_model_path", "genrm-demo")),
+        "api_key": kwargs.get("api_key", kwargs.get("remote_api_key", "EMPTY")),
+        "gen": kwargs.get("gen", {"max_tokens": 1024, "temperature": 0.0}),
+        "timeout_s": kwargs.get("timeout_s", 120.0),
+        "max_retries": kwargs.get("max_retries", 3),
+        "base_delay": kwargs.get("base_delay", 2.0),
+    }
+    max_workers = int(kwargs.get("max_workers", 32))
+    use_marginal = bool(kwargs.get("use_marginal_improvement", True))
+    fractional = bool(kwargs.get("fractional_shaping", False))
+    use_tci = bool(kwargs.get("use_together_code_interpreter", False))
+
+    results = [0.0] * len(data_sources)
+
+    def _do(i: int) -> float:
+        ds = data_sources[i]
+        fb = solution_strs[i] if i < len(solution_strs) else ""
+        gt = ground_truths[i]
+        info = extra_infos[i] if i < len(extra_infos) else {}
+        reward, _, _ = _score_one_sample(
+            data_source=ds,
+            feedback=fb,
+            ground_truth=gt,
+            extra_info=info,
+            http_cfg=http_cfg,
+            use_marginal_improvement=use_marginal,
+            fractional_shaping=fractional,
+            use_tci=use_tci,
+        )
+        return float(reward)
+
+    with ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futs = {ex.submit(_do, i): i for i in range(len(data_sources))}
+        for fut in as_completed(futs):
+            i = futs[fut]
+            try:
+                results[i] = fut.result()
+            except Exception as e:
+                print(f"[cm_reward/batch] sample {i} failed: {e}")
+                results[i] = 0.0
+
+    return results
+

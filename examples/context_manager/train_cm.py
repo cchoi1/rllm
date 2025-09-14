@@ -17,7 +17,8 @@ from pathlib import Path
 from rllm.trainer.agent_trainer import AgentTrainer
 from rllm.agents.context_manager_agent import ContextManagerAgent
 from rllm.environments.base.context_manager_env import ContextManagerEnv
-from rllm.rewards.cm_reward import rllm_reward_fn_context_assist
+# from rllm.rewards.cm_reward_old import rllm_reward_fn_context_assist
+from rllm.rewards.cm_reward import rllm_reward_fn_context_assist, rllm_reward_fn_context_assist_batch
 from rllm.data.dataset import DatasetRegistry
 
 
@@ -63,8 +64,8 @@ def register_deepcoder_chunked_dataset():
 @hydra.main(config_path="pkg://rllm.trainer.config", config_name="ppo_trainer", version_base=None)
 def main(config):
     # Register chunked DeepCoder dataset
-    train_dataset, _ = register_deepcoder_chunked_dataset()
-    # train_dataset = DatasetRegistry.load_dataset("lcb", "train")
+    # train_dataset, _ = register_deepcoder_chunked_dataset()
+    train_dataset = DatasetRegistry.load_dataset("lcb", "train")
     test_dataset = DatasetRegistry.load_dataset("lcb", "test")
     
     if train_dataset is None:
@@ -72,26 +73,27 @@ def main(config):
         return
     
     # Build env args (matching run_cm.py)
-    # Get default values from config if available, otherwise use defaults
-    solver_remote_url = "http://localhost:12345/v1"
-    
-    # Try to get values from config.env_args if it exists
-    if hasattr(config, 'env_args') and config.env_args is not None:
-        if hasattr(config.env_args, 'reward_kwargs') and hasattr(config.env_args.reward_kwargs, 'remote_url'):
-            solver_remote_url = config.env_args.reward_kwargs.remote_url or solver_remote_url
-        if hasattr(config.env_args, 'solver_remote') and hasattr(config.env_args.solver_remote, 'base_url'):
-            solver_remote_url = config.env_args.solver_remote.base_url or solver_remote_url
-    
+    # Resolve remote solver settings safely
+    default_base_url = "http://localhost:12345/v1"
+    default_model_name = "agentica-org/DeepCoder-1.5B-Preview"
+    default_max_tokens = 16384
+
+    solver_remote_cfg = getattr(getattr(config, "env_args", None), "solver_remote", None)
+    solver_remote_url = getattr(solver_remote_cfg, "base_url", None) or default_base_url
+    solver_remote_model = getattr(solver_remote_cfg, "model", None) or default_model_name
+    solver_remote_api_key = getattr(solver_remote_cfg, "api_key", None) or "None"
+    solver_remote_max_tokens = getattr(solver_remote_cfg, "max_tokens", None) or default_max_tokens
+
     env_args = {
         "reward_fn": rllm_reward_fn_context_assist,
         "reward_kwargs": {
-            "solver_model_path": config.actor_rollout_ref.model.path,
+            "solver_model_path": solver_remote_model,
             "remote_url": solver_remote_url,
-            "remote_api_key": "None",
+            "remote_api_key": solver_remote_api_key,
+            "timeout_s": 600.0,
             "gen": {
-                # "temperature": config.actor_rollout_ref.rollout.temperature,
                 "temperature": 0.0,
-                "max_new_tokens": config.env_args.solver_remote.max_tokens,
+                "max_tokens": solver_remote_max_tokens,
             },
             "use_marginal_improvement": True,
             "fractional_shaping": False,
@@ -99,11 +101,10 @@ def main(config):
         },
         "solver_remote": {
             "base_url": solver_remote_url,
-            "api_key": "None",
-            "model": config.actor_rollout_ref.model.path,
-            # "temperature": config.actor_rollout_ref.rollout.temperature,
+            "api_key": solver_remote_api_key,
+            "model": solver_remote_model,
             "temperature": 0.0,
-            "max_tokens": config.env_args.solver_remote.max_tokens,
+            "max_tokens": solver_remote_max_tokens,
         },
         "max_turns": 4,
         "use_shaped_reward": False,

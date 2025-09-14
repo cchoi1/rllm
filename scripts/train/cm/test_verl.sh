@@ -1,6 +1,3 @@
-#!/usr/bin/env bash
-set -euo pipefail
-
 # --- vLLM / torch env
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:False"
@@ -32,44 +29,13 @@ RLLM_DIR=$(python3 -c "import rllm; import os; print(os.path.dirname(os.path.dir
 # ------------------------------
 MODEL_PATH="agentica-org/DeepCoder-1.5B-Preview"
 
-RUN_DIR="${BASE_CACHE_DIR}/rllm/runs/$(date +%m-%d-%H-%M)"
+RUN_DIR=/scr/biggest/cchoi1/rllm/runs/$(date +%m-%d-%H-%M)
 mkdir -p "$RUN_DIR"
-
-# ---- Remote vLLM endpoint on Node A ----
-# Set these to your Node A host/port and API key used when launching vLLM
-SGLANG_HOST="jagupard33.stanford.edu"    # e.g., sphinx8.stanford.edu or 10.24.7.52
-SGLANG_PORT=12345
-SGLANG_BASE_URL="http://${SGLANG_HOST}:${SGLANG_PORT}/v1"
-
-echo "=== sglang Solver Configuration ==="
-echo "Host: $SGLANG_HOST"
-echo "Port: $SGLANG_PORT"
-echo "Base URL: $SGLANG_BASE_URL"
-echo "Model: $MODEL_PATH"
-echo "=================================="
-
-# Optional: quick readiness check for remote server
-for i in {1..10}; do
-  if curl -sS "${SGLANG_BASE_URL}/models" | grep -q "${MODEL_PATH}"; then
-    echo "Remote sglang is reachable and serving ${MODEL_PATH}"
-    break
-  fi
-  echo "Waiting for remote sglang at ${SGLANG_BASE_URL} ... (${i}/10)"
-  sleep 6
-  if [[ $i -eq 10 ]]; then
-    echo "ERROR: Could not reach remote sglang at ${SGLANG_BASE_URL} or model not listed."
-    exit 1
-  fi
-done
-
-curl -sS -H "Content-Type: application/json" \
-  -d "{\"model\":\"$MODEL_PATH\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" \
-  "${SGLANG_BASE_URL}/chat/completions"
 
 NUM_GPUS=4
 
 python3 -m examples.context_manager.train_cm \
-    agent.max_steps=4 \
+    agent.max_steps=2 \
     agent.use_stepwise_advantage=True \
     agent.normalize_step_advantage=True \
     agent.stepwise_advantage_mode=broadcast \
@@ -80,15 +46,17 @@ python3 -m examples.context_manager.train_cm \
     hydra.run.dir="$RUN_DIR" \
     +trainer.save_dir="$RUN_DIR/checkpoints" \
     algorithm.adv_estimator=grpo \
-    data.train_batch_size=8 \
-    data.val_batch_size=16 \
-    data.max_prompt_length=16384 \
+    data.train_batch_size=128 \
+    data.val_batch_size=256 \
+    data.max_prompt_length=8192 \
     data.max_response_length=8192 \
     +env_args.solver_remote.temperature=0.2 \
-    +env_args.solver_remote.max_tokens=16384 \
-    +env_args.solver_remote.base_url="$SGLANG_BASE_URL" \
+    +env_args.solver_remote.max_tokens=8192 \
+    +env_args.solver_remote.base_url="$VLLM_BASE_URL" \
+    +env_args.solver_remote.api_key="$VLLM_API_KEY" \
     +env_args.solver_remote.model="$MODEL_PATH" \
-    +env_args.reward_kwargs.remote_url="$SGLANG_BASE_URL" \
+    +env_args.reward_kwargs.remote_url="$VLLM_BASE_URL" \
+    +env_args.reward_kwargs.remote_api_key="$VLLM_API_KEY" \
     +env_args.reward_kwargs.solver_model_path="$MODEL_PATH" \
     actor_rollout_ref.model.path="$MODEL_PATH" \
     actor_rollout_ref.hybrid_engine=True \
@@ -97,11 +65,11 @@ python3 -m examples.context_manager.train_cm \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.loss_agg_mode=seq-mean-token-mean \
-    actor_rollout_ref.actor.ppo_mini_batch_size=8 \
-    actor_rollout_ref.actor.ppo_micro_batch_size=4 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=64 \
+    actor_rollout_ref.actor.ppo_micro_batch_size=16 \
     actor_rollout_ref.actor.ppo_epochs=1 \
     actor_rollout_ref.actor.use_dynamic_bsz=True \
-    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=30000 \
+    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=20000 \
     actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.kl_loss_coef=0 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
@@ -142,4 +110,3 @@ python3 -m examples.context_manager.train_cm \
     trainer.test_freq=5 \
     trainer.default_hdfs_dir=null \
     trainer.total_epochs=100
-

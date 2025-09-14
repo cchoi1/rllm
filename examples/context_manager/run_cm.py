@@ -8,7 +8,8 @@ from rllm.agents.context_manager_agent import ContextManagerAgent
 from rllm.data.dataset import DatasetRegistry
 from rllm.engine.agent_execution_engine import AgentExecutionEngine
 from rllm.environments.base.context_manager_env import ContextManagerEnv
-from rllm.rewards.cm_reward import rllm_reward_fn_context_assist
+# from rllm.rewards.cm_reward import rllm_reward_fn_context_assist
+from rllm.rewards.cm_reward_old import rllm_reward_fn_context_assist
 from rllm.utils import save_trajectories
 
 if __name__ == "__main__":
@@ -72,7 +73,7 @@ if __name__ == "__main__":
             "api_key": "None",
         },
         max_response_length=MAX_TOKENS,
-        max_prompt_length=8192,
+        max_prompt_length=32768,
         n_parallel_agents=n_parallel_agents,
     )
 
