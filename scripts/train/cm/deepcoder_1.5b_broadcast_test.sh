@@ -134,7 +134,7 @@ python3 -m examples.context_manager.train_cm \
     trainer.logger="['wandb','console']" \
     trainer.project_name="rllm-deepcoder" \
     trainer.experiment_name="cm-deepcoder1.5b-broadcast-4steps" \
-    trainer.val_before_train=False \
+    trainer.val_before_train=True \
     trainer.n_gpus_per_node="$NUM_GPUS" \
     trainer.n_training_gpus_per_node="$NUM_GPUS" \
     trainer.nnodes=1 \
