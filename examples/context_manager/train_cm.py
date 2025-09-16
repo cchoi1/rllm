@@ -95,6 +95,7 @@ def main(config):
                 "temperature": 0.0,
                 "max_tokens": solver_remote_max_tokens,
             },
+            "use_solver_cot": False,
             "use_marginal_improvement": True,
             "fractional_shaping": False,
             "use_together_code_interpreter": False,

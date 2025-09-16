@@ -54,6 +54,7 @@ _SESSION.mount("https://", HTTPAdapter(max_retries=_RETRY))
 # -------------------------------
 def build_solver_prompt(
     problem: str,
+    use_solver_cot: bool,
     feedback: Optional[str],
     prev_attempts: Optional[List[Dict[str, Any]]],
 ) -> str:
@@ -61,7 +62,11 @@ def build_solver_prompt(
     if prev_attempts:
         last = prev_attempts[-1]
         formatted = _format_verifier_results(last.get("verifier_results", {}))
-        last_attempt_txt = last.get("solver_full_output") or last.get("solver_output") or ""
+        if not use_solver_cot:
+            last_attempt_txt = last.get("solver_output") or ""
+        else:
+            last_attempt_txt = last.get("solver_full_output") or ""
+
         parts.append("\nPrevious attempt (for reference; DO NOT copy):\n")
         parts.append(last_attempt_txt.strip())
         parts.append("\nUnit test results summary:\n")
@@ -77,40 +82,6 @@ def build_solver_prompt(
 # -------------------------------
 # HTTP chat (non-streaming)
 # -------------------------------
-# def _http_chat_once(
-#     base_url: str,
-#     model: str,
-#     prompt: str,
-#     api_key: Optional[str] = None,
-#     gen_cfg: Optional[Dict[str, Any]] = None,
-#     timeout_s: float = 600.0,
-# ) -> str:
-#     headers = {"Content-Type": "application/json"}
-#     if api_key and api_key not in ("EMPTY", "None", None):
-#         headers["Authorization"] = f"Bearer {api_key}"
-
-#     payload = {
-#         "model": model,
-#         "messages": [{"role": "user", "content": prompt}],
-#         "stream": False,  # IMPORTANT: non-streaming to avoid ContentLength/partial-body issues
-#     }
-
-#     # Normalize generation params (support either key naming)
-#     if gen_cfg:
-#         norm = dict(gen_cfg)
-#         if "max_new_tokens" in norm and "max_tokens" not in norm:
-#             norm["max_tokens"] = norm.pop("max_new_tokens")
-#         payload.update({k: v for k, v in norm.items() if v is not None})
-
-#     resp = requests.post(
-#         _build_chat_url(base_url),
-#         headers=headers,
-#         json=payload,
-#         timeout=timeout_s,
-#     )
-#     resp.raise_for_status()
-#     data = resp.json()
-#     return data["choices"][0]["message"]["content"]
 
 def _http_chat_once(
     base_url: str,
@@ -162,7 +133,7 @@ def _http_chat_once(
     url = _build_chat_url(base_url)
     try:
         # Separate connect/read timeouts helps diagnose slow servers
-        resp = session.post(url, headers=headers, json=payload, timeout=(10, timeout_s))
+        resp = session.post(url, headers=headers, json=payload, timeout=(600.0, timeout_s))
         resp.raise_for_status()
         data = resp.json()  # can raise ValueError if body is truncated/invalid
     except Exception:
@@ -175,6 +146,124 @@ def _http_chat_once(
         raise RuntimeError(f"Unexpected response schema from solver at {url}. Preview: {preview}")
 
     return choices[0]["message"]["content"]
+
+
+# --- NEW: SSE (stream=True) chat call with robust parsing ---
+def _http_chat_stream_once(
+    base_url: str,
+    model: str,
+    prompt: str,
+    api_key: Optional[str] = None,
+    gen_cfg: Optional[Dict[str, Any]] = None,
+    timeout_s: float = 600.0,
+) -> str:
+    """
+    Streams an OpenAI/SGLang-style /chat/completions response and concatenates
+    delta['content'] pieces into a single string.
+
+    Notes:
+      - Uses text/event-stream (SSE) with server-chunked lines starting with "data: "
+      - Stops on a line containing "[DONE]".
+    """
+    session = requests.Session()
+    retry = Retry(
+        total=3, connect=3, read=3,
+        backoff_factor=1.5,
+        status_forcelist=(500, 502, 503, 504),
+        allowed_methods=frozenset(["POST"]),
+        raise_on_status=False,
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("http://", adapter)
+    session.mount("https://", adapter)
+
+    headers = {
+        # IMPORTANT for SSE:
+        "Accept": "text/event-stream",
+        "Content-Type": "application/json",
+        # Avoid gzip+keepalive truncation issues on very long generations:
+        "Accept-Encoding": "identity",
+        "Connection": "close",
+    }
+    if api_key and api_key not in ("EMPTY", "None", None):
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    # Build payload
+    payload: Dict[str, Any] = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": True,            # <<<<<<<< STREAMING
+        "n": 1,
+    }
+    if gen_cfg:
+        norm = dict(gen_cfg)
+        if "max_new_tokens" in norm and "max_tokens" not in norm:
+            norm["max_tokens"] = norm.pop("max_new_tokens")
+        for k, v in norm.items():
+            if v is not None:
+                payload[k] = v
+    payload.setdefault("temperature", 0.0)
+    payload.setdefault("max_tokens", 1024)
+
+    url = _build_chat_url(base_url)
+
+    # Separate connect/read timeouts; read applies per-chunk
+    # (Requests applies the read timeout to individual socket ops,
+    # not the whole stream duration.)
+    resp = session.post(
+        url, headers=headers, json=payload, stream=True, timeout=(60.0, timeout_s)
+    )
+    resp.raise_for_status()
+
+    out_chunks: List[str] = []
+
+    # Iterate server-sent events line-by-line
+    # decode_unicode=True -> yields str lines
+    for raw_line in resp.iter_lines(decode_unicode=True):
+        if not raw_line:
+            continue
+        # SSE frames look like: "data: {...json...}"
+        if raw_line.startswith("data:"):
+            data_str = raw_line[len("data:"):].strip()
+            if not data_str:
+                continue
+            if data_str == "[DONE]":
+                break
+            # Some backends can send multiple JSON objects in one "data:" line
+            # separated by \n; split defensively.
+            for piece in data_str.split("\n"):
+                piece = piece.strip()
+                if not piece:
+                    continue
+                try:
+                    evt = json.loads(piece)
+                except Exception:
+                    # If the server accidentally emits non-JSON lines, skip them
+                    continue
+
+                # Handle error payloads if any
+                if isinstance(evt, dict) and "error" in evt:
+                    err = evt["error"]
+                    if isinstance(err, dict):
+                        msg = err.get("message", str(err))
+                    else:
+                        msg = str(err)
+                    raise RuntimeError(f"Upstream error: {msg}")
+
+                # Standard OpenAI/SGLang delta format:
+                # evt["choices"][0]["delta"]["content"] may be present
+                try:
+                    choices = evt.get("choices", [])
+                    if choices:
+                        delta = choices[0].get("delta", {})
+                        fragment = delta.get("content")
+                        if fragment:
+                            out_chunks.append(fragment)
+                except Exception:
+                    # Be permissive; ignore malformed chunks
+                    pass
+
+    return "".join(out_chunks)
 
 
 def _chat_with_retries(
@@ -190,7 +279,7 @@ def _chat_with_retries(
     last_err = None
     for attempt in range(max_retries):
         try:
-            return _http_chat_once(
+            return _http_chat_stream_once(
                 base_url=base_url,
                 model=model,
                 prompt=prompt,
@@ -202,8 +291,9 @@ def _chat_with_retries(
             last_err = e
             if attempt < max_retries - 1:
                 time.sleep(base_delay * (2 ** attempt))
-    print(f"[cm_reward] HTTP chat failed after {max_retries} retries: {last_err}")
+    print(f"[cm_reward] HTTP chat (streaming) failed after {max_retries} retries: {last_err}")
     return None
+
 
 
 # -------------------------------
@@ -282,6 +372,7 @@ def _score_one_sample(
     ground_truth: Any,
     extra_info: Dict[str, Any],
     http_cfg: Dict[str, Any],
+    use_solver_cot: bool,
     use_marginal_improvement: bool,
     fractional_shaping: bool,
     use_tci: bool,
@@ -294,8 +385,8 @@ def _score_one_sample(
     base_url = http_cfg["base_url"]
     model_name = http_cfg["model_name"]
     api_key = http_cfg.get("api_key")
-    gen_cfg = http_cfg.get("gen", {"max_tokens": 1024, "temperature": 0.0})
-    timeout_s = float(http_cfg.get("timeout_s", 120.0))
+    gen_cfg = http_cfg.get("gen", {"max_tokens": 16384, "temperature": 0.0})
+    timeout_s = float(http_cfg.get("timeout_s", 600.0))
     max_retries = int(http_cfg.get("max_retries", 3))
     base_delay = float(http_cfg.get("base_delay", 2.0))
 
@@ -325,7 +416,7 @@ def _score_one_sample(
     if not feedback or not str(feedback).strip():
         if baseline_passed is None:
             # Need to compute a baseline by calling solver w/o feedback
-            prompt0 = build_solver_prompt(problem, None, prev_attempts)
+            prompt0 = build_solver_prompt(problem, use_solver_cot, None, prev_attempts)
             text0 = _chat_with_retries(
                 base_url, model_name, prompt0, api_key, gen_cfg, max_retries, base_delay, timeout_s
             )
@@ -341,7 +432,7 @@ def _score_one_sample(
             "initial_results": baseline_details,
             "initial_solver_code": baseline_code,
             "initial_solver_output": baseline_solver_output,
-            "initial_solver_prompt": build_solver_prompt(problem, None, prev_attempts),
+            "initial_solver_prompt": build_solver_prompt(problem, use_solver_cot, None, prev_attempts),
             "retry_passed": None,
             "retry_results": None,
             "retry_solver_code": None,
@@ -350,7 +441,7 @@ def _score_one_sample(
         }
 
     # With feedback: compute retry
-    retry_prompt = build_solver_prompt(problem, feedback, prev_attempts)
+    retry_prompt = build_solver_prompt(problem, use_solver_cot, feedback, prev_attempts)
     retry_text = _chat_with_retries(
         base_url, model_name, retry_prompt, api_key, gen_cfg, max_retries, base_delay, timeout_s
     )
@@ -384,7 +475,7 @@ def _score_one_sample(
         "initial_results": baseline_details,
         "initial_solver_code": baseline_code,
         "initial_solver_output": baseline_solver_output,
-        "initial_solver_prompt": build_solver_prompt(problem, None, prev_attempts),
+        "initial_solver_prompt": build_solver_prompt(problem, use_solver_cot, None, prev_attempts),
         "retry_passed": retry_passed,
         "retry_results": retry_details,
         "retry_solver_code": retry_code,
@@ -420,11 +511,12 @@ def rllm_reward_fn_context_assist(
         "base_url": kwargs.get("base_url", kwargs.get("remote_url", "http://localhost:12345/v1")),
         "model_name": kwargs.get("model_name", kwargs.get("solver_model_path", "genrm-demo")),
         "api_key": kwargs.get("api_key", kwargs.get("remote_api_key", "EMPTY")),
-        "gen": kwargs.get("gen", {"max_tokens": 1024, "temperature": 0.0}),
+        "gen": kwargs.get("gen", {"max_tokens": 16384, "temperature": 0.0}),
         "timeout_s": kwargs.get("timeout_s", 600.0),
         "max_retries": kwargs.get("max_retries", 3),
         "base_delay": kwargs.get("base_delay", 2.0),
     }
+    use_solver_cot = bool(kwargs.get("use_solver_cot", False))
     use_marginal = bool(kwargs.get("use_marginal_improvement", True))
     fractional = bool(kwargs.get("fractional_shaping", False))
     use_tci = bool(kwargs.get("use_together_code_interpreter", False))
@@ -435,6 +527,7 @@ def rllm_reward_fn_context_assist(
         ground_truth=ground_truth,
         extra_info={"problem": problem, "prev_attempts": prev_attempts or []},
         http_cfg=http_cfg,
+        use_solver_cot=use_solver_cot,
         use_marginal_improvement=use_marginal,
         fractional_shaping=fractional,
         use_tci=use_tci,
@@ -475,12 +568,13 @@ def rllm_reward_fn_context_assist_batch(
         "base_url": kwargs.get("base_url", kwargs.get("remote_url", "http://localhost:12345/v1")),
         "model_name": kwargs.get("model_name", kwargs.get("solver_model_path", "genrm-demo")),
         "api_key": kwargs.get("api_key", kwargs.get("remote_api_key", "EMPTY")),
-        "gen": kwargs.get("gen", {"max_tokens": 1024, "temperature": 0.0}),
-        "timeout_s": kwargs.get("timeout_s", 120.0),
+        "gen": kwargs.get("gen", {"max_tokens": 16384, "temperature": 0.0}),
+        "timeout_s": kwargs.get("timeout_s", 600.0),
         "max_retries": kwargs.get("max_retries", 3),
         "base_delay": kwargs.get("base_delay", 2.0),
     }
     max_workers = int(kwargs.get("max_workers", 32))
+    use_solver_cot = bool(kwargs.get("use_solver_cot", False))
     use_marginal = bool(kwargs.get("use_marginal_improvement", True))
     fractional = bool(kwargs.get("fractional_shaping", False))
     use_tci = bool(kwargs.get("use_together_code_interpreter", False))
@@ -498,6 +592,7 @@ def rllm_reward_fn_context_assist_batch(
             ground_truth=gt,
             extra_info=info,
             http_cfg=http_cfg,
+            use_solver_cot=use_solver_cot,
             use_marginal_improvement=use_marginal,
             fractional_shaping=fractional,
             use_tci=use_tci,
@@ -515,4 +610,3 @@ def rllm_reward_fn_context_assist_batch(
                 results[i] = 0.0
 
     return results
-

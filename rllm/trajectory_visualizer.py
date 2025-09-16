@@ -6,7 +6,7 @@ import torch
 from fire import Fire
 
 
-def main(trajectory_file: str = "./trajectories/cm_ours_step25_deepcoder_4turns_279_20250914_154253.pt", server_port: int = 23457):
+def main(trajectory_file: str = "./trajectories/DeepCoder-1.5B-Preview_context_manager_trajectories_10_20250916_141413.pt", server_port: int = 23457):
     trajs_data = torch.load(trajectory_file, weights_only=False)
     all_trajs = list(filter(lambda x: hasattr(x, "steps") and len(x.steps) > 0, trajs_data))
 
@@ -383,9 +383,16 @@ def main(trajectory_file: str = "./trajectories/cm_ours_step25_deepcoder_4turns_
         solver_results_text = empty_content
         context_manager_prompt_text = empty_content
         
+        print(f"DEBUG - Step has extras: {hasattr(step, 'extras')}")
+        if hasattr(step, 'extras'):
+            print(f"DEBUG - Step extras type: {type(step.extras)}")
+            print(f"DEBUG - Step extras value: {step.extras}")
+        
         if hasattr(step, 'extras') and isinstance(step.extras, dict):
             extras = step.extras
+            print(f"DEBUG - Step extras keys: {list(extras.keys())}")
             solver_prompt = extras.get("solver_prompt", "")
+            print(f"DEBUG - Solver prompt value: '{solver_prompt}' (length: {len(solver_prompt) if solver_prompt else 0})")
             solver_code = extras.get("solver_code", "")
             solver_full_output = extras.get("solver_full_output", "")
             verifier_results = extras.get("verifier_results", "")
@@ -396,7 +403,10 @@ def main(trajectory_file: str = "./trajectories/cm_ours_step25_deepcoder_4turns_
             
             if solver_prompt:
                 solver_prompt_text = f"**🤖 Solver Prompt:**\n```\n{solver_prompt}\n```"
-            
+                print(f"DEBUG - Solver prompt text created: {solver_prompt_text[-100:]}...")
+            else:
+                print("DEBUG - No solver prompt found, keeping empty content")
+            print(f"DEBUG - Final solver_prompt_text: {solver_prompt_text[-100:] if solver_prompt_text != empty_content else 'EMPTY_CONTENT'}...")
             if solver_code:
                 # Clean any thinking tokens from solver code
                 cleaned_code = re.sub(r'<think>.*?</think>', '', str(solver_code), flags=re.DOTALL)

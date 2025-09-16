@@ -372,17 +372,28 @@ class AgentExecutionEngine:
                         last_user_msg = msg
                         break
                 context_manager_prompt = last_user_msg
-                # print("Updating step extras for idx", idx)
                 if not hasattr(cur_step, 'extras') or cur_step.extras is None:
                     cur_step.extras = {}
+
+                # Base fields from current observation
+                obs_solver_prompt = agent._current_obs.get("solver_prompt", "")
+                print(f"[agent_execution_engine] Obs solver prompt: {obs_solver_prompt}")
+                obs_solver_full_output = agent._current_obs.get("solver_full_output", "")
+                obs_solver_code = agent._current_obs.get("solver_output", "")
+                obs_verifier_results = agent._current_obs.get("verifier_results", "")
+                obs_passed_tests = agent._current_obs.get("passed_tests", 0)
+                obs_total_tests = agent._current_obs.get("total_tests", 0)
+                obs_solved = agent._current_obs.get("solved", False)
+                obs_round_idx = agent._current_obs.get("round_idx", 0)
+
                 cur_step.extras.update({
-                    "solver_prompt": agent._current_obs.get("solver_prompt", ""),
-                    "solver_full_output": agent._current_obs.get("solver_full_output", ""),
-                    "solver_code": agent._current_obs.get("solver_output", ""),
-                    "verifier_results": agent._current_obs.get("verifier_results", ""),
-                    "passed_tests": agent._current_obs.get("passed_tests", 0),
-                    "total_tests": agent._current_obs.get("total_tests", 0),
-                    "solved": agent._current_obs.get("solved", False),
+                    "solver_prompt": obs_solver_prompt,
+                    "solver_full_output": obs_solver_full_output,
+                    "solver_code": obs_solver_code,
+                    "verifier_results": obs_verifier_results,
+                    "passed_tests": obs_passed_tests,
+                    "total_tests": obs_total_tests,
+                    "solved": obs_solved,
                     "context_manager_prompt": self.chat_parser.parse([last_user_msg], add_generation_prompt=True, is_first_msg=True),
                 })
 

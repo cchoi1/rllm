@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:4
 #SBATCH --mem=512GB
-#SBATCH --cpus-per-task=32
+#SBATCH --cpus-per-task=48
 #SBATCH --job-name="deepcoder_1.5b_cm_broadcast_4_steps"
 #SBATCH --output=deepcoder_1.5b_cm_broadcast_4_steps.log
 #SBATCH --mail-type=END,FAIL
@@ -106,7 +106,7 @@ python3 -m examples.context_manager.train_cm \
     algorithm.adv_estimator=grpo \
     data.train_batch_size=128 \
     data.val_batch_size=256 \
-    data.max_prompt_length=24576 \
+    data.max_prompt_length=18000 \
     data.max_response_length=8192 \
     +env_args.solver_remote.temperature=0.0 \
     +env_args.solver_remote.max_tokens=16384 \
@@ -127,7 +127,7 @@ python3 -m examples.context_manager.train_cm \
     actor_rollout_ref.actor.ppo_micro_batch_size=16 \
     actor_rollout_ref.actor.ppo_epochs=1 \
     actor_rollout_ref.actor.use_dynamic_bsz=True \
-    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=35000 \
+    actor_rollout_ref.actor.ppo_max_token_len_per_gpu=30000 \
     actor_rollout_ref.actor.use_kl_loss=False \
     actor_rollout_ref.actor.kl_loss_coef=0 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
@@ -151,15 +151,15 @@ python3 -m examples.context_manager.train_cm \
     actor_rollout_ref.rollout.val_kwargs.temperature=0.6 \
     actor_rollout_ref.rollout.val_kwargs.top_p=0.95 \
     actor_rollout_ref.ref.fsdp_config.param_offload=False \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4 \
     algorithm.kl_ctrl.kl_coef=0.001 \
     algorithm.mask_truncated_samples=True \
     algorithm.clip_advantages=False \
     trainer.critic_warmup=0 \
     trainer.logger="['wandb','console']" \
     trainer.project_name="rllm-deepcoder" \
-    trainer.experiment_name="cm-deepcoder1.5b-broadcast-4steps" \
+    trainer.experiment_name="cm-deepcoder1.5b-broadcast-4steps-debug" \
     trainer.val_before_train=True \
     trainer.n_gpus_per_node="$NUM_GPUS" \
     trainer.n_training_gpus_per_node="$NUM_GPUS" \

@@ -8,8 +8,8 @@ from rllm.agents.context_manager_agent import ContextManagerAgent
 from rllm.data.dataset import DatasetRegistry
 from rllm.engine.agent_execution_engine import AgentExecutionEngine
 from rllm.environments.base.context_manager_env import ContextManagerEnv
-# from rllm.rewards.cm_reward import rllm_reward_fn_context_assist
-from rllm.rewards.cm_reward_old import rllm_reward_fn_context_assist
+from rllm.rewards.cm_reward import rllm_reward_fn_context_assist
+# from rllm.rewards.cm_reward_old import rllm_reward_fn_context_assist
 from rllm.utils import save_trajectories
 
 if __name__ == "__main__":
@@ -33,7 +33,7 @@ if __name__ == "__main__":
             "remote_url": "http://localhost:12345/v1",
             "remote_api_key": "None",
             "gen": {
-                "temperature": 0.2,
+                "temperature": 0.0,
                 "max_new_tokens": MAX_TOKENS,
             },
         },
@@ -41,7 +41,7 @@ if __name__ == "__main__":
             "base_url": "http://localhost:12345/v1",
             "api_key": "None",
             "model": model_name,
-            "temperature": 0.2,
+            "temperature": 0.0,
             "max_tokens": MAX_TOKENS,
         },
         "max_turns": 4,
@@ -72,13 +72,14 @@ if __name__ == "__main__":
             "base_url": "http://localhost:30000/v1",
             "api_key": "None",
         },
-        max_response_length=MAX_TOKENS,
-        max_prompt_length=25000,
+        max_response_length=8192,
+        max_prompt_length=8192,
         n_parallel_agents=n_parallel_agents,
     )
 
     test_dataset = DatasetRegistry.load_dataset("lcb", "test")
     tasks = test_dataset.get_data()
+    tasks = tasks[:10]
     
     if not tasks:
         print("No tasks found in dataset!")
