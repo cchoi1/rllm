@@ -6,7 +6,7 @@ import torch
 from fire import Fire
 
 
-def main(trajectory_file: str = "./trajectories/Qwen2.5-Coder-1.5B-Instruct_context_manager_trajectories_10_20250907_172803.pt", server_port: int = 23457):
+def main(trajectory_file: str = "./trajectories/cm_ours_step25_deepcoder_4turns_279_20250914_154253.pt", server_port: int = 23457):
     trajs_data = torch.load(trajectory_file, weights_only=False)
     all_trajs = list(filter(lambda x: hasattr(x, "steps") and len(x.steps) > 0, trajs_data))
 

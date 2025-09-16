@@ -5,12 +5,12 @@
 #SBATCH --nodes=1
 #SBATCH --gres=gpu:4
 #SBATCH --mem=512GB
-#SBATCH --cpus-per-task=64
-#SBATCH --job-name="deepcoder_1.5b_cm_broadcast_4_steps_longer_prompt"
-#SBATCH --output=deepcoder_1.5b_cm_broadcast_4_steps_longer_prompt.log
+#SBATCH --cpus-per-task=32
+#SBATCH --job-name="deepcoder_1.5b_cm_broadcast_4_steps"
+#SBATCH --output=deepcoder_1.5b_cm_broadcast_4_steps.log
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=cchoi1@stanford.edu
-#SBATCH --exclude=sphinx[1-2,5,7]
+#SBATCH --exclude=sphinx[1-2,4,5,7]
 
 # Load conda environment
 source /nlp/scr/cchoi1/miniconda3/etc/profile.d/conda.sh
@@ -39,7 +39,7 @@ export RAY_DISABLE_DASHBOARD=1
 # clean any previous instances and stray shared dirs
 ray stop -f || true
 pkill -9 -f "ray::" || true
-rm -rf /tmp/ray /tmp/*/ray 2>/dev/null || true
+rm -rf "/tmp/$USER"/ray_* 2>/dev/null || true
 
 
 # recreate isolated dirs AFTER cleanup
@@ -47,6 +47,7 @@ export RAY_TMPDIR="/tmp/$USER/ray_${SLURM_JOB_ID:-$$}"
 export TMPDIR="/tmp/$USER/tmp_${SLURM_JOB_ID:-$$}"
 mkdir -p "$RAY_TMPDIR" "$TMPDIR"
 chmod 700 "$RAY_TMPDIR" "$TMPDIR"
+export RAY_object_store_allow_fallback_to_memory=1
 
 RLLM_DIR=$(python3 -c "import rllm; import os; print(os.path.dirname(os.path.dirname(rllm.__file__)))")
 
@@ -55,13 +56,12 @@ RLLM_DIR=$(python3 -c "import rllm; import os; print(os.path.dirname(os.path.dir
 # ------------------------------
 MODEL_PATH="agentica-org/DeepCoder-1.5B-Preview"
 
-# RUN_DIR=/scr/biggest/cchoi1/rllm/runs/$(date +%m-%d-%H-%M)
-RUN_DIR=/scr/cchoi1/rllm/runs/$(date +%m-%d-%H-%M)
+RUN_DIR=/scr/biggest/cchoi1/rllm/runs/$(date +%m-%d-%H-%M)
 mkdir -p "$RUN_DIR"
 
 # ---- Remote vLLM endpoint on Node A ----
 # Set these to your Node A host/port and API key used when launching vLLM
-VLLM_HOST="sphinx7.stanford.edu"    # e.g., sphinx8.stanford.edu or 10.24.7.52
+VLLM_HOST="tiger7.stanford.edu"
 VLLM_PORT=12345
 VLLM_BASE_URL="http://${VLLM_HOST}:${VLLM_PORT}/v1"
 
@@ -109,7 +109,7 @@ python3 -m examples.context_manager.train_cm \
     data.max_prompt_length=24576 \
     data.max_response_length=8192 \
     +env_args.solver_remote.temperature=0.0 \
-    +env_args.solver_remote.max_tokens=8192 \
+    +env_args.solver_remote.max_tokens=16384 \
     +env_args.solver_remote.base_url="$VLLM_BASE_URL" \
     +env_args.solver_remote.api_key="$VLLM_API_KEY" \
     +env_args.solver_remote.model="$MODEL_PATH" \
@@ -151,16 +151,16 @@ python3 -m examples.context_manager.train_cm \
     actor_rollout_ref.rollout.val_kwargs.temperature=0.6 \
     actor_rollout_ref.rollout.val_kwargs.top_p=0.95 \
     actor_rollout_ref.ref.fsdp_config.param_offload=False \
-    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=4 \
-    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=4 \
+    actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=2 \
+    actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=2 \
     algorithm.kl_ctrl.kl_coef=0.001 \
     algorithm.mask_truncated_samples=True \
     algorithm.clip_advantages=False \
     trainer.critic_warmup=0 \
     trainer.logger="['wandb','console']" \
     trainer.project_name="rllm-deepcoder" \
-    trainer.experiment_name="cm-deepcoder1.5b-broadcast-4steps-new" \
-    trainer.val_before_train=False \
+    trainer.experiment_name="cm-deepcoder1.5b-broadcast-4steps" \
+    trainer.val_before_train=True \
     trainer.n_gpus_per_node="$NUM_GPUS" \
     trainer.n_training_gpus_per_node="$NUM_GPUS" \
     trainer.nnodes=1 \

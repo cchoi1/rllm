@@ -73,7 +73,7 @@ if __name__ == "__main__":
             "api_key": "None",
         },
         max_response_length=MAX_TOKENS,
-        max_prompt_length=32768,
+        max_prompt_length=25000,
         n_parallel_agents=n_parallel_agents,
     )
 

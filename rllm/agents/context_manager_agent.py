@@ -132,19 +132,20 @@ class ContextManagerAgent(BaseAgent):
 
     def update_from_model(self, response: str, **kwargs) -> Action:
         """
-        Turn model response into the feedback action. If remove_cm_thinking=True,
-        strip a single </think> block.
+        If remove_cm_thinking=True, strip a single </think> block from what we
+        append to _messages (so training prompt doesn't include thoughts).
         """
-        if self.remove_cm_thinking and response.count("</think>") == 1:
-            thought, action = response.split("</think>")
-            thought += "</think>"
-            action = action.strip()
-            self._messages.append({"role": "assistant", "content": response})
-        else:
-            action = response
-            self._messages.append({"role": "assistant", "content": response})
+        action = response
+        thought = ""
+        if self.remove_cm_thinking and "</think>" in response:
+            parts = response.split("</think>", 1)
+            thought = parts[0] + "</think>"
+            action = parts[1].strip()
 
-        # Extract and store the updated summary if memory is enabled
+        # APPEND ONLY ACTION to chat history
+        self._messages.append({"role": "assistant", "content": action})
+
+        # Keep summary extraction based on the full response (optional)
         if self.use_memory:
             self._extract_and_store_summary(response)
 
@@ -154,8 +155,15 @@ class ContextManagerAgent(BaseAgent):
             model_response=response,
             observation=self._current_obs_str,
         )
+        # (optional) save the thought on the Step for analysis
+        try:
+            step.thought = thought
+        except Exception:
+            pass
+
         self._trajectory.steps.append(step)
         return Action(action=action)
+
 
     def _extract_and_store_summary(self, response: str):
         """Extract the updated summary from the agent's response and store it"""
