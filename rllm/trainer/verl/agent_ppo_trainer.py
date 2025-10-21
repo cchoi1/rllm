@@ -125,6 +125,93 @@ class AgentPPOTrainer(RayPPOTrainer):
                 agents[idx] = agent
         self.agent_execution_engine.update_envs_and_agents(envs, agents)
         return envs
+    
+
+    def _apply_truncated_stepwise_is(self, batch, clip_max: float = 3.0, level: str = "sequence", geom_mean: bool = False):
+        """
+        Compute per-step IS weights over each step's response tokens and fold them into advantages/returns.
+
+        Expects:
+        - batch.batch["response_mask"]: (B, T) 1/0 mask selecting the step's response tokens
+        - batch has log-probs for rollout policy μ ("rollout_log_prob") and current train policy π ("train_log_prob"),
+            both shaped (B, T) over the concatenated prompt+response tokens.
+
+        If those log-prob fields don't exist yet, this function computes them.
+
+        Args:
+        clip_max: truncate IS weights at this maximum (ρ̄).
+        level: "sequence" = one scalar per step by aggregating token ratios across the step.
+             "token"    = clip per token, then aggregate to a scalar (see geom_mean).
+        geom_mean: if True and level=="token", aggregate per-token weights with geometric mean; else use arithmetic mean.
+
+        Side-effects:
+        - Scales batch.batch["advantages"] and batch.batch["returns"] in-place by the per-step clipped IS scalar.
+        """
+        # Ensure response_mask exists
+        if "response_mask" not in batch.batch:
+            batch.batch["response_mask"] = compute_response_mask(batch)
+
+        resp_mask = batch.batch["response_mask"].bool()  # (B, T)
+
+        # 1) Ensure we have rollout (μ) and train (π) log-probs over the same tokens.
+        # Rollout μ: use the rollout actor to teacher-force and get token log-probs for the collected tokens.
+        if "rollout_log_prob" not in batch.batch:
+            mu_lp = self.actor_rollout_wg.compute_log_prob(batch)   # returns a DataProto with e.g. {"log_prob": ...}
+            k = "log_prob" if "log_prob" in mu_lp.batch else list(mu_lp.batch.keys())[0]
+            batch.batch["rollout_log_prob"] = mu_lp.batch[k]
+
+        # Train π: teacher-force with the *current* actor (the one being updated)
+        if hasattr(self, "actor_wg"):
+            pi_lp = self.actor_wg.compute_log_prob(batch)
+        else:
+            # If you run hybrid where actor updates happen on actor_rollout_wg, call that here.
+            pi_lp = self.actor_rollout_wg.compute_log_prob(batch)
+        k = "log_prob" if "log_prob" in pi_lp.batch else list(pi_lp.batch.keys())[0]
+        batch.batch["train_log_prob"] = pi_lp.batch[k]
+
+        # 2) Build token-level ratios over response tokens only
+        logp_pi = batch.batch["train_log_prob"]        # (B, T)
+        logp_mu = batch.batch["rollout_log_prob"]      # (B, T)
+
+        # Only count response tokens in the step
+        logw_tok = (logp_pi - logp_mu) * resp_mask     # (B, T)
+
+        # 3) Aggregate to one scalar per step and truncate
+        if level == "sequence":
+            # Sequence-level IS per step (sum token log-ratios over the step)
+            logw = logw_tok.sum(dim=-1)                # (B,)
+            w = torch.exp(logw).clamp(max=clip_max)    # ρ_t = min(exp(sum Δlogp), ρ̄)
+        elif level == "token":
+            # Token-level clip then aggregate to a scalar
+            w_tok = torch.exp(logw_tok)
+            w_tok = torch.clamp(w_tok, max=clip_max)   # clip per token
+            # Avoid dividing by zero when a row has no response tokens (all masked)
+            denom = resp_mask.sum(dim=-1).clamp_min(1)
+            if geom_mean:
+                # geometric mean over response tokens
+                # mean(log(w_tok)) over tokens, then exp
+                safe_w_tok = torch.where(resp_mask, w_tok.clamp(min=1e-12), torch.ones_like(w_tok))
+                w = torch.exp(torch.log(safe_w_tok).sum(dim=-1) / denom)
+            else:
+                # arithmetic mean over response tokens
+                w = (w_tok * resp_mask).sum(dim=-1) / denom
+        else:
+            raise ValueError(f"Unknown IS level: {level}")
+
+        # 4) Fold into advantages/returns (per-token), respecting the response mask
+        # Broadcast the scalar (B,) to (B, T) and apply only on response tokens
+        adv = batch.batch["advantages"]
+        ret = batch.batch["returns"]
+        scale = w.unsqueeze(-1) * resp_mask
+
+        batch.batch["advantages"] = adv * scale
+        batch.batch["returns"]    = ret * scale
+
+        # (Optional) Log for debugging
+        if "metrics" in batch.meta_info:
+            batch.meta_info["metrics"]["is/ratio_mean"] = w.mean().item()
+            batch.meta_info["metrics"]["is/ratio_max"]  = w.max().item()
+
 
     def fit_agent(self):
         """
@@ -404,6 +491,26 @@ class AgentPPOTrainer(RayPPOTrainer):
                                 self._stepwise_advantage_broadcast(batch, other_step_batch=other_step_batch)
                                 # batch = batch.merge(other_step_batch)
                                 batch = DataProto.concat([batch, other_step_batch])
+                                # === PER-STEP TRUNCATED IS (apply after advantages are finalized) ===
+                                if self.config.agent.use_stepwise_advantage:
+                                    # Make sure we have a response_mask per step (safe if already present)
+                                    if "response_mask" not in batch.batch:
+                                        batch.batch["response_mask"] = compute_response_mask(batch)
+
+                                    # Read knobs from config (with sensible defaults)
+                                    # IMPORTANT: to avoid double-correction, set algorithm.rollout_is=false in stepwise configs.
+                                    is_clip  = float(self.config.algorithm.get("rollout_is_clip", 3.0))
+                                    is_level = self.config.algorithm.get("rollout_is_level", "sequence")    # "sequence" or "token"
+                                    is_geom  = bool(self.config.algorithm.get("rollout_is_geom_mean", False))
+
+                                    is_metrics = self._apply_truncated_stepwise_is(
+                                        batch,
+                                        clip_max=is_clip,
+                                        level=is_level,
+                                        geom_mean=is_geom,
+                                    )
+                                    metrics.update({f"rollout_is/{k}": v for k, v in is_metrics.items()})
+                                # === END PER-STEP TRUNCATED IS ===
 
                     batch = self._pad_dataproto_to_world_size(batch=batch)
                     # balance the number of valid tokens on each dp rank.
