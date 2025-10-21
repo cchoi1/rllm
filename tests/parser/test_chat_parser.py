@@ -1,12 +1,12 @@
 from transformers import AutoTokenizer
 
-from rllm.parser.chat_template.parser import (
+from rllm.parser import (
     ChatTemplateParser,
     DeepseekQwenChatTemplateParser,
     LlamaChatTemplateParser,
     QwenChatTemplateParser,
 )
-from rllm.parser.chat_template.utils import PARSER_TEST_MESSAGES
+from rllm.parser.utils import PARSER_TEST_MESSAGES
 
 
 def test_qwen_chat_template_parser():

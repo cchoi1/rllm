@@ -1,17 +1,18 @@
-FROM verlai/verl:base-verl0.5-cu126-cudnn9.8-torch2.7.0-fa2.7.4
-
-ENV DEBIAN_FRONTEND=noninteractive
+# Start from the verl base image
+# Dockerfile.base
+FROM verlai/verl:app-verl0.4-sglang0.4.6.post5-vllm0.8.5-mcore0.12.2-te2.2
 
 WORKDIR /workspace
 
-RUN pip uninstall verl -y || true
-
+# 1) Clone rllm repository with submodules
 RUN git clone --recurse-submodules https://github.com/rllm-org/rllm.git rllm
 
+# 2) Install verl and rllm (editable)
 RUN cd rllm && \
-    pip install -e ./verl && \
+    pip install --no-deps -e ./verl && \
     pip install -e .
 
+# 3) Install playwright
 RUN pip install playwright && \
     playwright install chromium && \
     playwright install-deps

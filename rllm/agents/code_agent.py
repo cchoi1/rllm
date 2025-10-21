@@ -23,17 +23,17 @@ class CompetitionCodingAgent(BaseAgent):
     A code agent that iteratively writes code to solve a problem.
     """
 
-    def __init__(self, remove_thinking=False, max_tests=2, public_test_only=True):
+    def __init__(self, accumulate_thinking=False, max_tests=2, public_test_only=False):
         """
         Initialize the CodeAgent.
         """
         self.revise_instruction = "Here's the feedback from the previous attempt. Revise the code to fix the errors and improve the solution."
         self._trajectory = Trajectory()
         self.messages = []
-        self.remove_thinking = remove_thinking
+        self.accumulate_thinking = accumulate_thinking
+
         self.max_tests = max_tests
         self.public_test_only = public_test_only
-        self.current_observation = None
 
     def format_test_results(self, test_results: list[dict]) -> str:
         def normalize_string(s):
@@ -102,33 +102,43 @@ class CompetitionCodingAgent(BaseAgent):
             else:
                 formatted_observation = str(observation)
 
+        # Update reward on the latest step
+        if self.trajectory.steps:
+            cur_step = self.get_current_state()
+            cur_step.reward = reward
+            cur_step.done = done
+            cur_step.info = info
+
         if done:
             return
 
         self.messages.append({"role": "user", "content": formatted_observation})
-        self.current_observation = formatted_observation
+
+        new_step = Step(observation=formatted_observation)
+        self._trajectory.steps.append(new_step)
 
     def update_from_model(self, response: str, **kwargs) -> Action:
         """
         Updates the agent's internal state based on the model's response.
         """
-        content = response
-        action = response
+        self.messages.append({"role": "assistant", "content": response})
 
-        # Handle thinking removal if needed
-        if self.remove_thinking and content.count("</think>") == 1:
-            thought, action = response.split("</think>")
-            thought += "</think>"
-            action = action.strip()
-            self.messages.append({"role": "assistant", "content": action})
+        cur_step = self.get_current_state()
+        cur_step.chat_completions = self.chat_completions
+        cur_step.model_response = response
+
+        if response.count("</think>") == 1:
+            thought, sep, action = response.partition("</think>")
+            thought = thought + sep
+            action = Action(action.strip())
         else:
-            self.messages.append({"role": "assistant", "content": response})
+            thought = None
+            action = Action(response.strip())
 
-        # Create new step
-        new_step = Step(chat_completions=copy.deepcopy(self.chat_completions), action=action, model_response=response, observation=self.current_observation)
-        self._trajectory.steps.append(new_step)
+        cur_step.thought = thought
+        cur_step.action = action
 
-        return Action(action=action)
+        return action
 
     def reset(self):
         """
@@ -136,12 +146,19 @@ class CompetitionCodingAgent(BaseAgent):
         """
         self._trajectory = Trajectory()
         self.messages = []
-        self.current_observation = None
 
     @property
     def chat_completions(self) -> list[dict[str, str]]:
-        """Returns the history of messages for chat completion."""
-        return self.messages
+        """Return conversation history for model interaction."""
+        # remove thinking from assistant messages if not accumulate_thinking except the last one
+        messages = copy.deepcopy(self.messages)
+        if not self.accumulate_thinking:
+            for msg in messages[:-1]:
+                if msg["role"] == "assistant":
+                    _, sep, after = msg["content"].partition("</think>")
+                    if sep:
+                        msg["content"] = after
+        return messages
 
     @property
     def trajectory(self) -> Trajectory:

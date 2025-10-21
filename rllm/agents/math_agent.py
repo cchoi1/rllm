@@ -13,7 +13,6 @@ class MathAgent(BaseAgent):
         """
         Initialize the MathAgent.
         """
-        self.instruction = "Let's think step by step, and put your final answer within \\boxed{}."
         self._trajectory = Trajectory()
         self.messages = []
         self.accumulate_thinking = accumulate_thinking
@@ -21,30 +20,57 @@ class MathAgent(BaseAgent):
     def update_from_env(self, observation: Any, reward: float, done: bool, info: dict, **kwargs):
         """Process environment feedback and update internal state."""
 
-        # Format observation based on whether it's the initial problem or subsequent feedback
-        if not self.trajectory.steps:
-            # Initial problem presentation
-            assert isinstance(observation, dict) and "question" in observation
-            question = observation["question"]
-            formatted_observation = f"{question} {self.instruction}"
+        # Reward update for existing step (None OR empty dict)
+        if observation is None or (isinstance(observation, dict) and observation == {}):
+            if self.trajectory.steps:
+                cur_step = self.get_current_state()
+                cur_step.reward = reward
+                cur_step.done = done
+                cur_step.info = info
+            return
+
+        # This is a new observation, create a new step
+        if isinstance(observation, dict):
+            if "question" not in observation:
+                raise ValueError(f"Observation dict missing required 'question' field: {observation}")
+            formatted_observation = observation["question"]
+        elif isinstance(observation, str):
+            formatted_observation = observation
         else:
-            # Follow-up correction prompt
-            formatted_observation = "Your previous answer may contain a mistake. Please review it carefully and answer again. Put your final answer within \\boxed{}."
+            raise ValueError(f"Invalid observation type: {type(observation)}")
 
         self.messages.append({"role": "user", "content": formatted_observation})
+
+        new_step = Step(observation=formatted_observation)
+        self._trajectory.steps.append(new_step)
 
     def update_from_model(self, response: str, **kwargs) -> Action:
         """
         Updates the agent's internal state based on the model's response.
         """
+
+        # Update the latest step
         self.messages.append({"role": "assistant", "content": response})
-        new_step = Step(chat_completions=copy.deepcopy(self.chat_completions))
-        self.trajectory.steps.append(new_step)
 
-        return Action(action=response)
+        cur_step = self.get_current_state()
+        cur_step.chat_completions = self.chat_completions
+        cur_step.model_response = response
 
-    def reset(self):
-        """Reset agent state for new episode."""
+        if response.count("</think>") == 1:
+            thought, sep, action = response.partition("</think>")
+            thought = thought + sep
+            action = Action(action.strip())
+        else:
+            thought = None
+            action = Action(response.strip())
+
+        cur_step.thought = thought
+        cur_step.action = action
+
+        return action
+
+    def reset(self) -> None:
+        """Reset agent state for new episode (wipes trajectory and messages)."""
         self._trajectory = Trajectory()
         self.messages = []
 

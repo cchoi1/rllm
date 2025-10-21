@@ -3,7 +3,8 @@ from typing import Any
 import ray
 
 from rllm.data import Dataset
-from rllm.trainer.verl.train_agent_ppo import train_agent
+from rllm.trainer.verl.ray_runtime_env import get_ppo_ray_runtime_env
+from rllm.trainer.verl.train_agent_ppo import TaskRunner
 
 
 class AgentTrainer:
@@ -14,8 +15,10 @@ class AgentTrainer:
 
     def __init__(
         self,
-        agent_class: type,
-        env_class: type,
+        workflow_class: type | None = None,
+        workflow_args: dict[str, Any] | None = None,
+        agent_class: type | None = None,
+        env_class: type | None = None,
         agent_args: dict[str, Any] | None = None,
         env_args: dict[str, Any] | None = None,
         config: dict[str, Any] | list[str] | None = None,
@@ -36,6 +39,20 @@ class AgentTrainer:
             agent_args: Optional arguments to pass to the agent class
             env_args: Optional arguments to pass to the environment class
         """
+
+        if workflow_class is not None and config.rllm.workflow.use_workflow:
+            if agent_class is not None:
+                raise ValueError("agent_class is not supported when using workflow, instead use workflow_args['agent_cls']")
+            if agent_args is not None:
+                raise ValueError("agent_args is not supported when using workflow, instead use workflow_args['agent_args']")
+            if env_class is not None:
+                raise ValueError("env_class is not supported when using workflow, instead use workflow_args['env_cls']")
+            if env_args is not None:
+                raise ValueError("env_args is not supported when using workflow, instead use workflow_args['env_args']")
+
+        self.workflow_class = workflow_class
+        self.workflow_args = workflow_args or {}
+
         self.agent_class = agent_class
         self.env_class = env_class
         self.agent_args = agent_args or {}
@@ -49,7 +66,25 @@ class AgentTrainer:
             self.config.data.val_files = val_dataset.get_verl_data_path()
 
     def train(self):
+        # Check if Ray is not initialized
         if not ray.is_initialized():
-            ray.init(runtime_env={"env_vars": {"TOKENIZERS_PARALLELISM": "true", "NCCL_DEBUG": "WARN"}})
+            # read off all the `ray_init` settings from the config
+            if self.config is not None and hasattr(self.config, "ray_init"):
+                ray_init_settings = {k: v for k, v in self.config.ray_init.items() if v is not None}
+            else:
+                ray_init_settings = {}
+            ray.init(runtime_env=get_ppo_ray_runtime_env(), **ray_init_settings)
 
-        ray.get(train_agent.remote(self.config, self.agent_class, self.env_class, self.agent_args, self.env_args))
+        runner = TaskRunner.remote()
+
+        ray.get(
+            runner.run.remote(
+                config=self.config,
+                workflow_class=self.workflow_class,
+                workflow_args=self.workflow_args,
+                agent_class=self.agent_class,
+                env_class=self.env_class,
+                agent_args=self.agent_args,
+                env_args=self.env_args,
+            )
+        )

@@ -1,7 +1,6 @@
 import pytest
 
-from rllm.parser.tool_parser.qwen_tool_parser import QwenToolParser
-from rllm.parser.tool_parser.r1_tool_parser import R1ToolParser
+from rllm.parser import QwenToolParser, R1ToolParser
 from rllm.tools.tool_base import ToolCall
 
 

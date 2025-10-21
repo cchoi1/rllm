@@ -4,11 +4,9 @@ and assigns rewards based on their correctness. It utilizes a language model to
 validate answers when necessary.
 """
 
-from rllm.globals import OAI_RM_MODEL, THOUGHT_DELIMITER_END
+from rllm.globals import THOUGHT_DELIMITER_END
 from rllm.rewards.math_utils.utils import extract_answer, grade_answer_mathd, grade_answer_sympy
 from rllm.rewards.reward_types import RewardConfig, RewardOutput, RewardType
-from rllm.system_prompts import ORM_PROMPT
-from rllm.utils import call_gemini_llm, call_oai_rm_llm
 
 ORM_USER_TEMPLATE = """
 Problem: {problem}
@@ -40,7 +38,7 @@ class RewardMathFn:
             RewardOutput: The calculated reward with correctness information
         """
         # Extract information from task_info
-        problem = task_info.get("problem", "")
+        # problem = task_info.get("problem", "")
         model_response = action
 
         # Handle None or empty response
@@ -92,31 +90,6 @@ class RewardMathFn:
                 if task_info.get("has_toolcall", False):
                     reward += self.config.toolcall_bonus
                 return RewardOutput(reward=reward, is_correct=True)
-
-        # If latex heuristics fail and ORM is enabled, use LLM as ORM to evaluate correctness
-        if self.config.use_math_orm:
-            for ground_truth in processed_ground_truths:
-                try:
-                    orm_response = call_gemini_llm(
-                        system_prompt=ORM_PROMPT,
-                        prompt=ORM_USER_TEMPLATE.format(problem=problem, answer_1=model_answer, answer_2=ground_truth),
-                        temperature=0.0,
-                    )
-
-                    if "[[YES]]" in orm_response:
-                        return RewardOutput(reward=self.config.correct_reward, is_correct=True)
-                except Exception:
-                    print("Error calling Gemini ORM, trying OAI RM")
-                    orm_response = call_oai_rm_llm(
-                        system_prompt=ORM_PROMPT,
-                        prompt=ORM_USER_TEMPLATE.format(problem=problem, answer_1=model_answer, answer_2=ground_truth),
-                        temperature=0.0,
-                        model_id=OAI_RM_MODEL,
-                    )
-
-                    if "[[YES]]" in orm_response:
-                        return RewardOutput(reward=self.config.correct_reward, is_correct=True)
-                    continue
 
         return RewardOutput(reward=self.config.incorrect_reward, is_correct=False)
 

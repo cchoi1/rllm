@@ -10,7 +10,7 @@ from rllm.trainer.agent_trainer import AgentTrainer
 from .local_retrieval_tool import LocalRetrievalTool
 
 
-@hydra.main(config_path="pkg://rllm.trainer.config", config_name="ppo_trainer", version_base=None)
+@hydra.main(config_path="pkg://rllm.trainer.config", config_name="agent_ppo_trainer", version_base=None)
 def main(config):
     train_dataset = DatasetRegistry.load_dataset("hotpotqa", "train")
     val_dataset = DatasetRegistry.load_dataset("hotpotqa", "test")

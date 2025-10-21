@@ -21,8 +21,6 @@ python3 -m examples.math_tool.train_math_with_tool \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.actor.loss_agg_mode=seq-mean-token-mean \
     actor_rollout_ref.actor.ppo_mini_batch_size=32 \
-    actor_rollout_ref.actor.use_dynamic_mini_batch=True \
-    actor_rollout_ref.actor.ppo_num_mini_batches=1 \
     actor_rollout_ref.actor.use_dynamic_bsz=True \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=24000 \
     actor_rollout_ref.actor.use_kl_loss=False \
@@ -30,14 +28,12 @@ python3 -m examples.math_tool.train_math_with_tool \
     actor_rollout_ref.actor.kl_loss_coef=0.001 \
     actor_rollout_ref.actor.kl_loss_type=low_var_kl \
     actor_rollout_ref.actor.ulysses_sequence_parallel_size=1 \
-    actor_rollout_ref.actor.grad_norm_threshold=10 \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
     actor_rollout_ref.actor.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.fsdp_config.optimizer_offload=True \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.mode="async" \
-    actor_rollout_ref.rollout.chat_scheduler=verl.schedulers.completions_scheduler.CompletionsScheduler \
     actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.temperature=0.6 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
@@ -50,8 +46,7 @@ python3 -m examples.math_tool.train_math_with_tool \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
     actor_rollout_ref.actor.entropy_coeff=0 \
     algorithm.kl_ctrl.kl_coef=0.001 \
-    algorithm.mask_truncated_samples=False \
-    algorithm.clip_advantages=False \
+    rllm.mask_truncated_samples=False \
     trainer.critic_warmup=0 \
     trainer.logger=['console','wandb'] \
     trainer.project_name='rllm-agent' \
@@ -62,8 +57,6 @@ python3 -m examples.math_tool.train_math_with_tool \
     trainer.save_freq=100 \
     trainer.test_freq=20 \
     trainer.default_hdfs_dir=null \
-    agent.max_steps=2 \
-    agent.async_engine=True \
-    agent.use_stepwise_advantage=False \
-    agent.stepwise_advantage_mode="mc_return" \
+    rllm.agent.max_steps=2 \
+    rllm.stepwise_advantage.enable=False \
     trainer.total_epochs=100

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rllm"
-version = "0.1.0"
+version = "0.2.0"
 description = "Reinforcement Learning for Language Agents"
 authors = [
     {name = "rLLM Team"}
@@ -19,30 +19,20 @@ classifiers = [
 license = {file = "LICENSE"}
 dependencies = [
     # Core ML/AI packages
-    "torch>=2.7",
-    "transformers",
-    "accelerate",
-    "flash-attn>=2.8.0.post2; sys_platform != 'darwin'",  # Skip on macOS
+    "torch>=2.6",
+    "transformers>=4.5",
     "sentence-transformers",
-    "torchmetrics",
-
-    # Training and inference
-    "deepspeed; sys_platform != 'darwin'",  # Skip on macOS
-    "vllm>=0.8.3; sys_platform != 'darwin'",  # Skip on macOS
-    "sgl-kernel",
-    "sglang>=0.4.8.post1",
-    "sglang-router",
-    "peft",
-    "torchao",
 
     # Data processing
     "datasets",
+    "pandas",
     "polars",
-    "dm-tree",
+    "pillow",
 
     # Cloud and infrastructure
     "google-cloud-aiplatform",
     "vertexai",
+    "docker",
     "kubernetes",
     "ray",
 
@@ -53,26 +43,37 @@ dependencies = [
     "firecrawl",
 
     # Math and science
-    "latex2sympy2",
+    "numpy",
+    "sympy",
     "pylatexenc",
-    "nltk",
-    "scipy",
-    "scikit-learn",
+    "antlr4-python3-runtime==4.9.3",
 
     # Code evaluation
     "swebench",
     "e2b_code_interpreter",
 
+    # Tools
+    "mcp",
+    "camel-ai",
+
     # Utilities
+    "hydra-core",
+    "openai",
     "fire",
     "gdown",
-    "tabulate",
-    "sortedcontainers",
-    "PyMuPDF",
-    "together",
+    "together>=1.4",
     "wandb",
-    "pybind11",
-    "gym",
+    "gymnasium",
+    "click",
+    "fastapi",
+    "uvicorn",
+    "httpx",
+    "jupyter",
+    "tqdm",
+    "rich",
+    "PyYAML",
+    "pydantic",
+    "wrapt",
 
     # Development and testing
     "pytest",
@@ -89,10 +90,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-gpu = [
-    "flash-attn>=2.8.0.post2; sys_platform != 'darwin'",
-    "deepspeed; sys_platform != 'darwin'",
-    "vllm>=0.8.3; sys_platform != 'darwin'",
+
+smolagents = [
+    "smolagents==1.20.0",
+]
+
+strands = [
+    "strands-agents",
 ]
 
 [tool.ruff]

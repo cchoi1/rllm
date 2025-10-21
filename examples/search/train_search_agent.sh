@@ -10,7 +10,7 @@ RLLM_DIR=$(python3 -c "import rllm; import os; print(os.path.dirname(os.path.dir
 
 # Run the training script with the specified configuration
 python3 -m examples.search.train_search_agent \
-    algorithm.adv_estimator=loop \
+    algorithm.adv_estimator=rloo \
     data.train_batch_size=64 \
     data.val_batch_size=128 \
     data.max_prompt_length=2048 \
@@ -34,7 +34,6 @@ python3 -m examples.search.train_search_agent \
     actor_rollout_ref.rollout.tensor_model_parallel_size=1 \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.mode="async" \
-    actor_rollout_ref.rollout.chat_scheduler=verl.schedulers.completions_scheduler.CompletionsScheduler \
     actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.temperature=0.7 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.85 \
@@ -48,8 +47,7 @@ python3 -m examples.search.train_search_agent \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
     actor_rollout_ref.actor.entropy_coeff=0 \
     algorithm.kl_ctrl.kl_coef=0.001 \
-    algorithm.mask_truncated_samples=False \
-    algorithm.clip_advantages=False \
+    rllm.mask_truncated_samples=False \
     trainer.critic_warmup=0 \
     trainer.logger=['console','wandb'] \
     trainer.project_name='deepscaler-agent' \
@@ -60,6 +58,5 @@ python3 -m examples.search.train_search_agent \
     trainer.save_freq=40 \
     trainer.test_freq=10 \
     trainer.default_hdfs_dir=null \
-    agent.max_steps=10 \
-    agent.async_engine=True \
+    rllm.agent.max_steps=10 \
     trainer.total_epochs=100 

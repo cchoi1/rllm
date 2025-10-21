@@ -1,5 +1,6 @@
 from typing import Protocol, runtime_checkable
 
+from rllm.agents.agent import Action
 from rllm.rewards.code_reward import RewardCodeFn
 from rllm.rewards.math_reward import RewardMathFn
 from rllm.rewards.reward_types import RewardConfig, RewardInput, RewardOutput
@@ -53,6 +54,8 @@ def math_reward_fn(task_info: dict, action: str) -> RewardOutput:
     """
     reward_config = RewardConfig()
     reward_fn = RewardMathFn(reward_config)
+    if isinstance(action, Action):
+        action = action.action
     return reward_fn(task_info, action)
 
 
@@ -69,6 +72,8 @@ def search_reward_fn(task_info: dict, action: str) -> RewardOutput:
     """
     reward_config = RewardConfig()
     reward_fn = RewardSearchFn(reward_config)
+    if isinstance(action, Action):
+        action = action.action
 
     # Create RewardInput from task_info and action
     reward_input = RewardInput(task_info=task_info, action=action)
@@ -89,4 +94,6 @@ def code_reward_fn(task_info: dict, action: str) -> RewardOutput:
     """
     reward_config = RewardConfig()
     reward_fn = RewardCodeFn(reward_config)
+    if isinstance(action, Action):
+        action = action.action
     return reward_fn(task_info, action)

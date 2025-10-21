@@ -1,6 +1,6 @@
 from transformers import PreTrainedTokenizerBase
 
-from rllm.parser.chat_template.parser import ChatTemplateParser
+from rllm.parser import ChatTemplateParser
 
 
 def get_recent_assistant_user_messages(chat_completions_messages):

@@ -18,3 +18,6 @@ Classic RL examples using environments like FrozenLake.
 
 ### 📚 [Math SFT Training](sft.md)
 Supervised fine-tuning of base math models(e.g. Qwen/Qwen2.5-Math-1.5B) using high-quality trajectories generated from teacher models (e.g. DeepScaleR)
+
+### ⚖️ [Solver-Judge Workflow](solver_judge.md)
+Train a multi-agent workflow to sample multiple candidate solutions, then use a judge to select the best.

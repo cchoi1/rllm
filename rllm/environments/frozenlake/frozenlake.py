@@ -12,6 +12,7 @@ import numpy as np
 from gymnasium.envs.toy_text.frozen_lake import FrozenLakeEnv as GymFrozenLakeEnv
 from gymnasium.utils import seeding
 
+from rllm.agents.agent import Action
 from rllm.environments.base.base_env import BaseEnv
 
 MAX_STEPS: int = 5
@@ -206,8 +207,9 @@ class FrozenLakeEnv(GymFrozenLakeEnv, BaseEnv):
     def _get_player_position(self):
         return (self.s // self.ncol, self.s % self.ncol)  # (row, col)
 
-    def reset(self):
-        self.__init__(size=self.map_kwargs["size"], p=self.map_kwargs["p"], seed=self.seed, is_slippery=self.env_kwargs["is_slippery"], desc=self.desc)
+    def reset(self, task=None):
+        task = task or {}
+        self.__init__(size=task.get("size", self.map_kwargs["size"]), p=task.get("p", self.map_kwargs["p"]), seed=task.get("seed", self.env_kwargs["seed"]), is_slippery=task.get("is_slippery", self.env_kwargs["is_slippery"]))
         GymFrozenLakeEnv.reset(self, seed=self.seed)
         return self.render(mode="tiny_rgb_array"), {}
 
@@ -232,6 +234,8 @@ class FrozenLakeEnv(GymFrozenLakeEnv, BaseEnv):
 
         if not action:
             action = self.INVALID_ACTION
+        if isinstance(action, Action):
+            action = action.action
         action = int(action)
         assert isinstance(action, int), "Action must be an integer"
         assert not self.success(), "Agent has already reached the goal or hole"

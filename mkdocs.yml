@@ -1,21 +1,21 @@
-site_name: rLLM
+site_name: ""
 site_description: A library for training LLM agents with reinforcement learning
 repo_url: https://github.com/rllm-org/rllm
 docs_dir: docs
 theme:
   name: material
-  logo: assets/agentica-logo.png
-  favicon: assets/agentica-logo-black.png
+  logo: assets/rllm_logo_white.png  # use a white or transparent version if possible
+  favicon: assets/rllm_logo.png
   palette:
     - scheme: default
-      primary: black
-      accent: black
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - scheme: slate
-      primary: black
-      accent: black
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -29,6 +29,9 @@ theme:
     - navigation.indexes
     - content.code.copy
     - content.code.annotate
+
+extra_css:
+  - stylesheets/extra.css
 
 plugins:
   - search
@@ -45,6 +48,7 @@ plugins:
             separate_signature: true
             show_symbol_type_heading: true
             show_symbol_type_toc: true
+            members_order: source
 
 watch:
   - ./rllm/
@@ -74,11 +78,14 @@ nav:
         - rLLM's Main Components: core-concepts/overview.md
         - Agent and Environment: core-concepts/agent_env.md
         - AgentExecutionEngine for Trajectory Rollout: core-concepts/execution-engine.md
+        - AgentWorkflowEngine for Episode Rollout: core-concepts/workflow-engine.md
         - AgentTrainer for RL Training: core-concepts/training.md
         - RL Algorithms for Agents: core-concepts/rl-algos.md
-      - Examples: examples/index.md
-      - API Reference: api/index.md
-      - Contributing: contributing.md
+      - References:
+        - Examples: examples/index.md
+        - API Reference: api/index.md
+        - Contributing: contributing.md
+        - Blogs: https://rllm-project.com/blog.html
   - Getting Started:
       - Installation: getting-started/installation.md
       - Quick Start: getting-started/quick-start.md
@@ -86,6 +93,7 @@ nav:
       - rLLM's Main Components: core-concepts/overview.md
       - Agent and Environment: core-concepts/agent_env.md
       - AgentExecutionEngine for Trajectory Rollout: core-concepts/execution-engine.md
+      - AgentWorkflowEngine for Episode Rollout: core-concepts/workflow-engine.md
       - AgentTrainer for RL Training: core-concepts/training.md
       - RL Algorithms for Agents: core-concepts/rl-algos.md
   - Examples:
@@ -96,6 +104,7 @@ nav:
       - Search Agent: examples/search.md
       - FrozenLake Agent: examples/frozenlake.md
       - Math SFT: examples/sft.md
+      - Solver-Judge Workflow: examples/solver_judge.md
 
   - API Reference:
       - Overview: api/index.md
@@ -105,8 +114,11 @@ nav:
       - Environments:
           - Environment Base: api/environments/base.md
           - Environment Utils: api/environments/env_utils.md
+      - Workflow:
+          - Workflow Base: api/workflows/workflow.md
       - Engine:
           - Agent Execution Engine: api/engine/agent_execution_engine.md
+          - Agent Workflow Engine: api/engine/agent_workflow_engine.md
       - Trainer:
           - Agent Trainer: api/trainer/agent_trainer.md
       - Tools:
@@ -118,3 +130,4 @@ nav:
           - Tool Parsers: api/parser/tool_parser.md
           - Chat Parsers: api/parser/chat_parser.md
   - Contributing: contributing.md
+  - Blogs: https://rllm-project.com/blog.html

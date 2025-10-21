@@ -10,7 +10,7 @@ export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
 RLLM_DIR=$(python3 -c "import rllm; import os; print(os.path.dirname(os.path.dirname(rllm.__file__)))")
 
 python3 -m rllm.trainer.verl.train_agent_ppo \
-    algorithm.adv_estimator=loop \
+    algorithm.adv_estimator=rloo \
     data.train_files=${RLLM_DIR}/data/swe/R2E_Gym_Subset.parquet \
     data.val_files=${RLLM_DIR}/data/swe/SWE_Bench_Verified.parquet \
     data.train_batch_size=8 \
@@ -42,7 +42,6 @@ python3 -m rllm.trainer.verl.train_agent_ppo \
     actor_rollout_ref.rollout.tensor_model_parallel_size=8 \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.mode="async" \
-    actor_rollout_ref.rollout.chat_scheduler=verl.schedulers.completions_scheduler.CompletionsScheduler \
     actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.temperature=1.0 \
     actor_rollout_ref.rollout.gpu_memory_utilization=0.6 \
@@ -52,8 +51,7 @@ python3 -m rllm.trainer.verl.train_agent_ppo \
     actor_rollout_ref.ref.fsdp_config.param_offload=True \
     actor_rollout_ref.actor.entropy_coeff=0.0 \
     algorithm.kl_ctrl.kl_coef=0.001 \
-    algorithm.mask_truncated_samples=False \
-    algorithm.clip_advantages=False \
+    rllm.mask_truncated_samples=False \
     trainer.critic_warmup=0 \
     trainer.logger=['console','wandb'] \
     trainer.project_name='deepscaler-agent' \
@@ -64,10 +62,9 @@ python3 -m rllm.trainer.verl.train_agent_ppo \
     trainer.save_freq=10 \
     trainer.test_freq=10 \
     trainer.default_hdfs_dir=null \
-    env.name=swe \
-    agent.name=sweagent \
-    agent.max_steps=50 \
-    agent.overlong_filter=True \
-    agent.trajectory_timeout=5400 \
-    agent.async_engine=True \
+    rllm.env.name=swe \
+    rllm.agent.name=sweagent \
+    rllm.agent.max_steps=50 \
+    rllm.agent.overlong_filter=True \
+    rllm.rllm.agent.trajectory_timeout=5400 \
     trainer.total_epochs=1000

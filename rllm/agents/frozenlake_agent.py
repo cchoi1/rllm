@@ -138,6 +138,13 @@ Now it is your turn, please show your thinking process and put the final action 
         Updates the agent's internal state after an environment step.
         Includes logic to check if the observation changed from the previous step.
         """
+
+        if self._trajectory.steps:
+            cur_step = self._trajectory.steps[-1]
+            cur_step.reward = reward
+            cur_step.done = done
+            cur_step.info = info
+
         current_obs_str = str(observation)
         # Base message for the user
         user_prompt_content = f"Current Observation ({self.step}): \n" + current_obs_str + "\n" + "You have not achieved the goal, P has not reached G yet. Please give the next action."
@@ -167,10 +174,10 @@ Now it is your turn, please show your thinking process and put the final action 
 
         thought, action_str = self._parse_model_response(content)
 
+        self.messages.append({"role": "assistant", "content": content})
+
         new_step = Step(chat_completions=copy.deepcopy(self.chat_completions), thought=thought, action=action_str, model_response=content, observation=self.current_observation)
         self._trajectory.steps.append(new_step)
-
-        self.messages.append({"role": "assistant", "content": content})
 
         self.step += 1
 

@@ -46,7 +46,6 @@ python3 -m examples.deepcoder.train_deepcoder \
     actor_rollout_ref.rollout.tensor_model_parallel_size=2 \
     actor_rollout_ref.rollout.name=vllm \
     actor_rollout_ref.rollout.mode="async" \
-    actor_rollout_ref.rollout.chat_scheduler=verl.schedulers.completions_scheduler.CompletionsScheduler \
     actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.temperature=0.6 \
     actor_rollout_ref.rollout.top_p=0.95 \
@@ -59,8 +58,7 @@ python3 -m examples.deepcoder.train_deepcoder \
     actor_rollout_ref.ref.log_prob_micro_batch_size_per_gpu=1 \
     actor_rollout_ref.rollout.log_prob_micro_batch_size_per_gpu=1 \
     algorithm.kl_ctrl.kl_coef=0.001 \
-    algorithm.mask_truncated_samples=True \
-    algorithm.clip_advantages=False \
+    rllm.mask_truncated_samples=True \
     trainer.critic_warmup=0 \
     trainer.logger=['console','wandb'] \
     trainer.project_name='rllm-deepcoder' \
@@ -71,6 +69,6 @@ python3 -m examples.deepcoder.train_deepcoder \
     trainer.save_freq=10 \
     trainer.test_freq=10 \
     trainer.default_hdfs_dir=null \
-    agent.max_steps=1 \
-    agent.use_stepwise_advantage=False \
+    rllm.agent.max_steps=1 \
+    rllm.stepwise_advantage.enable=False \
     trainer.total_epochs=100 

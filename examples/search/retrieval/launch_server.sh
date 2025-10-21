@@ -23,7 +23,7 @@ if [ ! -d "$DATA_DIR" ]; then
 fi
 
 # Check for required files
-required_files=("corpus.json" "e5_Flat.index")
+required_files=("../wikipedia/wiki-18.jsonl" "e5_Flat.index")
 for file in "${required_files[@]}"; do
     if [ ! -f "$DATA_DIR/$file" ]; then
         echo "Error: $file not found in $DATA_DIR"

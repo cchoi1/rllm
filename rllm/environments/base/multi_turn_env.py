@@ -25,9 +25,13 @@ class MultiTurnEnvironment(BaseEnv, ABC):
         self.max_turns = max_turns
         self.current_turn = 0
         self.done = False
-        self.history: list[Any] = []
+        self.history = []
 
-    def reset(self):
+    def reset(self, task: dict | None = None):
+        # Use the provided task if available, otherwise use the default task
+        if task is not None:
+            self.task = task
+
         self.done = False
         self.current_turn = 0
         self.history = []
