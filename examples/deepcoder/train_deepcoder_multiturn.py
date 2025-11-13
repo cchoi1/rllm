@@ -63,16 +63,15 @@ def format_time(seconds):
         return f"{secs}s"
 
 
-@hydra.main(config_path="pkg://rllm.trainer.config", config_name="ppo_trainer", version_base=None)
+@hydra.main(config_path="pkg://rllm.trainer.config", config_name="agent_ppo_trainer", version_base=None)
 def main(config):
     # Start timing
     start_time = time.time()
     print(f"Starting training at: {time.strftime('%Y-%m-%d %H:%M:%S')}")
     
     # Register chunked DeepCoder dataset
-    train_dataset, test_dataset = register_deepcoder_chunked_dataset()
-    # train_dataset = DatasetRegistry.load_dataset("lcb", "train")
-    # test_dataset = DatasetRegistry.load_dataset("lcb", "test")
+    train_dataset, _ = register_deepcoder_chunked_dataset()
+    test_dataset = DatasetRegistry.load_dataset("lcb", "test")
     
     if train_dataset is None:
         print("Failed to register chunked dataset. Exiting.")

@@ -1,10 +1,25 @@
 set -x
 
+# --- vLLM / torch env
+unset ROCR_VISIBLE_DEVICES ROCM_VISIBLE_DEVICES HIP_VISIBLE_DEVICES
 export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:False"
 export VLLM_USE_V1=1
 export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
-export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
+export VLLM_ENGINE_ITERATION_TIMEOUT_S=1000000000
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
+export HYDRA_FULL_ERROR=1
+export RAY_DISABLE_DASHBOARD=1
+
+# clean any previous instances and stray shared dirs
+ray stop -f || true
+pkill -9 -f "ray::" || true
+rm -rf "/tmp/$USER"/ray_* 2>/dev/null || true
+export RAY_TMPDIR="/scr/biggest/cchoi1/ray"
+export TMPDIR="/scr/biggest/cchoi1/tmp"
+mkdir -p "$RAY_TMPDIR" "$TMPDIR"
+chmod 700 "$RAY_TMPDIR" "$TMPDIR"
+export RAY_object_store_allow_fallback_to_memory=1
 
 # Find the directory where rllm package is located
 RLLM_DIR=$(python3 -c "import rllm; import os; print(os.path.dirname(os.path.dirname(rllm.__file__)))")
@@ -52,7 +67,7 @@ python3 -m examples.math_tool.train_math_with_tool \
     trainer.project_name='rllm-agent' \
     trainer.experiment_name='4b-math-tool' \
     trainer.val_before_train=True \
-    trainer.n_gpus_per_node=8 \
+    trainer.n_gpus_per_node=2 \
     trainer.nnodes=1 \
     trainer.save_freq=100 \
     trainer.test_freq=20 \

@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple, Callable, Union
 import os
 import time
 import requests
+import re
 
 from rllm.environments.base.multi_turn_env import MultiTurnEnvironment
 
@@ -10,6 +11,20 @@ from rllm.environments.base.multi_turn_env import MultiTurnEnvironment
 SolverGenerateFn = Callable[[str | List[str]],
                             Tuple[str | List[str], Dict[str, Any] | List[Dict[str, Any]]]]
 RewardFn = Callable[..., Tuple[Union[float, bool], Dict[str, Any]]]
+
+
+def _remove_code_blocks(text: str) -> str:
+    """
+    Remove all code blocks (```python ... ```, ```py ... ```, ``` ... ```, etc.)
+    from the feedback text.
+    """
+    if not text or not isinstance(text, str):
+        return text
+    
+    # Match code blocks: ```python ... ```, ```py ... ```, ``` ... ```, etc.
+    # Pattern matches any code block with optional language identifier
+    code_block_pattern = r'```(?:python|py|code|javascript|js|java|cpp|c\+\+|c|go|rust|ruby|php|swift|kotlin|scala|r|sql|html|css|xml|json|yaml|yml|bash|sh|shell|powershell|perl|typescript|ts|dart|haskell|clojure|lua|matlab|octave|vb|vbnet|fsharp|fs|elixir|erlang|ocaml|prolog|pascal|fortran|ada|assembly|asm)?\s*[\s\S]*?```'
+    return re.sub(code_block_pattern, '', text, flags=re.IGNORECASE).strip()
 
 
 class ContextManagerEnv(MultiTurnEnvironment):
@@ -35,6 +50,7 @@ class ContextManagerEnv(MultiTurnEnvironment):
         use_shaped_reward: bool = False,
         reward_bonus_coeff: float = 0.0,
         truncate_trace_chars: int = 2000,
+        exclude_code: bool = False,
         **kwargs,
     ):
         super().__init__(task=task, max_turns=max_turns, **kwargs)
@@ -42,12 +58,27 @@ class ContextManagerEnv(MultiTurnEnvironment):
         self.solver_remote = solver_remote or {}
         self.solver_model_name = solver_model_name  # ignored on purpose
         self.reward_fn = reward_fn
-        self.reward_kwargs = (reward_kwargs or {}).copy()
+        # Convert OmegaConf DictConfig to regular dict if needed to avoid struct mode issues
+        if reward_kwargs is not None:
+            try:
+                from omegaconf import DictConfig, OmegaConf
+                if isinstance(reward_kwargs, DictConfig):
+                    # Use OmegaConf.to_container() for deep recursive conversion to regular dict
+                    self.reward_kwargs = OmegaConf.to_container(reward_kwargs, resolve=True)
+                else:
+                    self.reward_kwargs = dict(reward_kwargs)
+            except ImportError:
+                # OmegaConf not available, treat as regular dict
+                self.reward_kwargs = dict(reward_kwargs or {})
+        else:
+            self.reward_kwargs = {}
 
         self.system_prompt = system_prompt
         self.use_shaped_reward = use_shaped_reward
         self.reward_bonus_coeff = reward_bonus_coeff
         self.truncate_trace_chars = truncate_trace_chars
+        self.exclude_code = exclude_code
+        self._timing_raw: Dict[str, float] = {}
 
         self.prev_reward_raw: Optional[float] = None
         self.history: List[Dict[str, Any]] = []
@@ -72,7 +103,6 @@ class ContextManagerEnv(MultiTurnEnvironment):
 
         # Push connection/model defaults into reward_kwargs so reward_fn/Solver sees them
         # Keep legacy keys for backward compatibility
-        self.reward_kwargs.setdefault("remote_urls", self._remote_base_urls)
         self.reward_kwargs.setdefault("remote_url", self._remote_base_urls[0])
         self.reward_kwargs.setdefault("remote_api_key", self._remote_api_key)
         self.reward_kwargs.setdefault("solver_model_path", self._remote_model)
@@ -81,6 +111,7 @@ class ContextManagerEnv(MultiTurnEnvironment):
         self.reward_kwargs["gen"].setdefault("max_new_tokens", self._max_tokens)
         self.reward_kwargs.setdefault("timeout_s", self._timeout_s)
         self.reward_kwargs.setdefault("max_retries", self._max_retries)
+        # Note: timing_raw is passed directly to reward_fn calls, not stored in reward_kwargs
 
         self._last_passed_tests = None
         self._last_total_tests = None
@@ -97,16 +128,21 @@ class ContextManagerEnv(MultiTurnEnvironment):
         self.current_turn = 0
         self.history = []
         self.prev_reward_raw = None
+        # Reset per-trajectory timing dictionary
+        self._timing_raw = {}
 
         # Generate baseline solver information for the initial observation
         assert self.reward_fn is not None, "Provide reward_fn."
+        # Filter out timing_raw from reward_kwargs if present (defensive, shouldn't happen)
+        reward_kwargs_clean = {k: v for k, v in self.reward_kwargs.items() if k != "timing_raw"}
         reward_output = self.reward_fn(
             data_source=self.task["data_source"],
             feedback="",  # No feedback for baseline
             ground_truth=self.task["ground_truth"],
             problem=self.task["prompt"],
             prev_attempts=[],
-            **self.reward_kwargs
+            timing_raw=self._timing_raw,
+            **reward_kwargs_clean
         )
         metadata = reward_output.metadata or {}
 
@@ -177,16 +213,24 @@ class ContextManagerEnv(MultiTurnEnvironment):
 
     def get_reward_and_next_obs(self, task: Dict[str, Any], feedback: str) -> Tuple[float, Dict[str, Any]]:
         assert self.reward_fn is not None, "Provide reward_fn."
+        print(f"\n\nCM Feedback: {feedback}")
         if "</think>" in feedback:
             feedback = feedback.split("</think>")[1].strip()
 
+        # Remove code blocks from feedback if exclude_code flag is set
+        if self.exclude_code:
+            feedback = _remove_code_blocks(feedback)
+
+        # Filter out timing_raw from reward_kwargs if present (defensive, shouldn't happen)
+        reward_kwargs_clean = {k: v for k, v in self.reward_kwargs.items() if k != "timing_raw"}
         reward_output = self.reward_fn(
             data_source=task["data_source"],
             feedback=feedback,
             ground_truth=task["ground_truth"],
             problem=task["prompt"],
             prev_attempts=self.history,
-            **self.reward_kwargs
+            timing_raw=self._timing_raw,
+            **reward_kwargs_clean
         )
         reward = reward_output.reward
         metadata = reward_output.metadata or {}
@@ -234,7 +278,7 @@ class ContextManagerEnv(MultiTurnEnvironment):
         if ("base_url" not in solver_remote) and ("base_urls" not in solver_remote):
             solver_remote["base_url"] = "http://localhost:12345/v1"
         if "model" not in solver_remote:
-            solver_remote["model"] = "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B"
+            solver_remote["model"] = "agentica-org/DeepCoder-1.5B-Preview"
 
         return ContextManagerEnv(
             task=task,
@@ -248,4 +292,5 @@ class ContextManagerEnv(MultiTurnEnvironment):
             use_shaped_reward=env_args.get("use_shaped_reward", False),
             reward_bonus_coeff=env_args.get("reward_bonus_coeff", 0.0),
             truncate_trace_chars=env_args.get("truncate_trace_chars", 2000),
+            exclude_code=env_args.get("exclude_code", False),
         )

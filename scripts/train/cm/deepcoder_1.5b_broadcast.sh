@@ -1,16 +1,16 @@
 #!/bin/bash
-#SBATCH --partition=sphinx
-#SBATCH --account=nlp
+#SBATCH --partition=tiger
+#SBATCH --account=tiger
 #SBATCH --time=120:00:00
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:4
+#SBATCH --gres=gpu:8
 #SBATCH --mem=512GB
-#SBATCH --cpus-per-task=48
-#SBATCH --job-name="deepcoder_1.5b_cm_broadcast_4_steps"
-#SBATCH --output=deepcoder_1.5b_cm_broadcast_4_steps.log
+#SBATCH --cpus-per-task=100
+#SBATCH --job-name="deepcoder_1.5b_cm_broadcast_4_steps-1016-debug"
+#SBATCH --output=deepcoder_1.5b_cm_broadcast_4_steps-1016-debug.log
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=cchoi1@stanford.edu
-#SBATCH --exclude=sphinx[1-2,4,5,7]
+#SBATCH --exclude=tiger[1-8]
 
 # Load conda environment
 source /nlp/scr/cchoi1/miniconda3/etc/profile.d/conda.sh
@@ -56,12 +56,13 @@ RLLM_DIR=$(python3 -c "import rllm; import os; print(os.path.dirname(os.path.dir
 # ------------------------------
 MODEL_PATH="agentica-org/DeepCoder-1.5B-Preview"
 
-RUN_DIR=/scr/biggest/cchoi1/rllm/runs/$(date +%m-%d-%H-%M)
+# RUN_DIR=/scr/biggest/cchoi1/rllm/runs/$(date +%m-%d-%H-%M)
+RUN_DIR=/scr/cchoi1/rllm/runs/cm-deepcoder1.5b-broadcast-4steps-seq-is-10-16
 mkdir -p "$RUN_DIR"
 
 # ---- Remote vLLM endpoint on Node A ----
 # Set these to your Node A host/port and API key used when launching vLLM
-VLLM_HOST="tiger7.stanford.edu"
+VLLM_HOST="tiger8.stanford.edu"
 VLLM_PORT=12345
 VLLM_BASE_URL="http://${VLLM_HOST}:${VLLM_PORT}/v1"
 
@@ -90,7 +91,7 @@ curl -sS -H "Content-Type: application/json" \
   -d "{\"model\":\"$MODEL_PATH\",\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}" \
   "${VLLM_BASE_URL}/chat/completions"
 
-NUM_GPUS=4
+NUM_GPUS=8
 
 python3 -m examples.context_manager.train_cm \
     agent.max_steps=4 \
@@ -104,10 +105,10 @@ python3 -m examples.context_manager.train_cm \
     hydra.run.dir="$RUN_DIR" \
     +trainer.save_dir="$RUN_DIR/checkpoints" \
     algorithm.adv_estimator=grpo \
-    data.train_batch_size=128 \
-    data.val_batch_size=256 \
-    data.max_prompt_length=18000 \
-    data.max_response_length=8192 \
+    data.train_batch_size=32 \
+    data.val_batch_size=64 \
+    data.max_prompt_length=10000 \
+    data.max_response_length=16384 \
     +env_args.solver_remote.temperature=0.0 \
     +env_args.solver_remote.max_tokens=16384 \
     +env_args.solver_remote.base_url="$VLLM_BASE_URL" \
@@ -122,9 +123,10 @@ python3 -m examples.context_manager.train_cm \
     +actor_rollout_ref.model.override_config.torch_dtype=bfloat16 \
     actor_rollout_ref.model.use_remove_padding=True \
     actor_rollout_ref.model.enable_gradient_checkpointing=True \
+    +actor_rollout_ref.actor.policy_loss.loss_mode=gspo \
     actor_rollout_ref.actor.loss_agg_mode=seq-mean-token-mean \
-    actor_rollout_ref.actor.ppo_mini_batch_size=64 \
-    actor_rollout_ref.actor.ppo_micro_batch_size=16 \
+    actor_rollout_ref.actor.ppo_mini_batch_size=32 \
+    actor_rollout_ref.actor.ppo_micro_batch_size=32 \
     actor_rollout_ref.actor.ppo_epochs=1 \
     actor_rollout_ref.actor.use_dynamic_bsz=True \
     actor_rollout_ref.actor.ppo_max_token_len_per_gpu=30000 \
@@ -145,7 +147,7 @@ python3 -m examples.context_manager.train_cm \
     actor_rollout_ref.rollout.enforce_eager=False \
     actor_rollout_ref.rollout.temperature=0.6 \
     actor_rollout_ref.rollout.top_p=0.95 \
-    actor_rollout_ref.rollout.gpu_memory_utilization=0.8 \
+    actor_rollout_ref.rollout.gpu_memory_utilization=0.9 \
     actor_rollout_ref.rollout.n=4 \
     actor_rollout_ref.rollout.val_kwargs.n=2 \
     actor_rollout_ref.rollout.val_kwargs.temperature=0.6 \
@@ -159,8 +161,8 @@ python3 -m examples.context_manager.train_cm \
     trainer.critic_warmup=0 \
     trainer.logger="['wandb','console']" \
     trainer.project_name="rllm-deepcoder" \
-    trainer.experiment_name="cm-deepcoder1.5b-broadcast-4steps-debug" \
-    trainer.val_before_train=True \
+    trainer.experiment_name="cm-deepcoder1.5b-broadcast-4steps-seq-is-10-16-debug" \
+    trainer.val_before_train=False \
     trainer.n_gpus_per_node="$NUM_GPUS" \
     trainer.n_training_gpus_per_node="$NUM_GPUS" \
     trainer.nnodes=1 \

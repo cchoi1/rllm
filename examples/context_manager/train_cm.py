@@ -1,8 +1,8 @@
 import asyncio
 import multiprocessing as mp, asyncio
-try: 
+try:
     mp.set_start_method("spawn", force=True)
-except RuntimeError: 
+except RuntimeError:
     pass
 asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
 
@@ -12,14 +12,38 @@ os.environ["VLLM_USE_V1"] = "1"
 os.environ["VLLM_ALLOW_LONG_MAX_MODEL_LEN"] = "1"
 os.environ["VLLM_ENGINE_ITERATION_TIMEOUT_S"] = "1000000000"
 
+# ───── NEW: wandb rewind patch ─────
+import wandb
+
+_orig_init = wandb.init
+
+def _patched_init(*args, **kwargs):
+    """
+    If WANDB_RUN_ID and WANDB_REWIND_STEP are set, force wandb to
+    rewind/truncate to that step before rllm starts logging.
+    """
+    run_id = os.environ.get("WANDB_RUN_ID")
+    rewind_step = os.environ.get("WANDB_REWIND_STEP")
+    if run_id and rewind_step:
+        # this is the SDK way to truncate steps > rewind_step
+        kwargs["resume_from"] = f"{run_id}?_step={rewind_step}"
+        print(f"Rewinding to step {rewind_step} for run {run_id}")
+    # you can still pass normal WANDB_RESUME etc. via env if rllm sets them
+    return _orig_init(*args, **kwargs)
+
+wandb.init = _patched_init
+# ─── end patch ───
+
 from pathlib import Path
 
 from rllm.trainer.agent_trainer import AgentTrainer
 from rllm.agents.context_manager_agent import ContextManagerAgent
 from rllm.environments.base.context_manager_env import ContextManagerEnv
-# from rllm.rewards.cm_reward_old import rllm_reward_fn_context_assist
-from rllm.rewards.cm_reward import rllm_reward_fn_context_assist, rllm_reward_fn_context_assist_batch
+from rllm.rewards.cm_reward import (
+    rllm_reward_fn_context_assist
+)
 from rllm.data.dataset import DatasetRegistry
+
 
 
 def register_deepcoder_chunked_dataset():
@@ -61,11 +85,10 @@ def register_deepcoder_chunked_dataset():
     return train_dataset, test_dataset
 
 
-@hydra.main(config_path="pkg://rllm.trainer.config", config_name="ppo_trainer", version_base=None)
+@hydra.main(config_path="pkg://rllm.trainer.config", config_name="agent_ppo_trainer", version_base=None)
 def main(config):
     # Register chunked DeepCoder dataset
     train_dataset, _ = register_deepcoder_chunked_dataset()
-    # train_dataset = DatasetRegistry.load_dataset("lcb", "train")
     test_dataset = DatasetRegistry.load_dataset("lcb", "test")
     
     if train_dataset is None:
@@ -83,6 +106,10 @@ def main(config):
     solver_remote_model = getattr(solver_remote_cfg, "model", None) or default_model_name
     solver_remote_api_key = getattr(solver_remote_cfg, "api_key", None) or "None"
     solver_remote_max_tokens = getattr(solver_remote_cfg, "max_tokens", None) or default_max_tokens
+    solver_remote_temperature = getattr(solver_remote_cfg, "temperature", None) or 0.0
+    penalize_code_in_feedback = getattr(getattr(config, "env_args", None), "penalize_code_in_feedback", None) or False
+    code_penalty = getattr(getattr(config, "env_args", None), "code_penalty", None) or 0.0
+    exclude_code = getattr(getattr(config, "env_args", None), "exclude_code", None) or False
 
     env_args = {
         "reward_fn": rllm_reward_fn_context_assist,
@@ -92,19 +119,21 @@ def main(config):
             "remote_api_key": solver_remote_api_key,
             "timeout_s": 600.0,
             "gen": {
-                "temperature": 0.0,
+                "temperature": solver_remote_temperature,
                 "max_tokens": solver_remote_max_tokens,
             },
             "use_solver_cot": False,
             "use_marginal_improvement": True,
             "fractional_shaping": False,
             "use_together_code_interpreter": False,
+            "penalize_code_in_feedback": penalize_code_in_feedback,
+            "code_penalty": code_penalty,
         },
         "solver_remote": {
             "base_url": solver_remote_url,
             "api_key": solver_remote_api_key,
             "model": solver_remote_model,
-            "temperature": 0.0,
+            "temperature": solver_remote_temperature,
             "max_tokens": solver_remote_max_tokens,
         },
         "max_turns": 4,
@@ -112,7 +141,9 @@ def main(config):
         "reward_bonus_coeff": 0.0,
         "truncate_trace_chars": 2000,
         "observation_key": "problem_text",
+        "exclude_code": exclude_code,
     }
+    print(f"Env args: {env_args}")
 
     # Agent args (matching run_cm.py)
     agent_args = {

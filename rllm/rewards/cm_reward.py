@@ -19,6 +19,7 @@ from rllm.rewards.code_reward import (
     humanevalplus_check_correctness,
 )
 from rllm.rewards.reward_types import RewardConfig, RewardOutput, RewardType
+from verl.utils.profiler import marked_timer
 
 # -------------------------------
 # Optional Together Code Tool
@@ -363,6 +364,28 @@ def _pass_fraction(details: Dict[str, Any]) -> Optional[float]:
     return None
 
 
+def _has_code_block(feedback: Optional[str]) -> bool:
+    """
+    Check if feedback contains code blocks (surrounded by ```python ``` or similar).
+    Returns True if any code block is detected.
+    
+    Matches patterns like:
+    - ```python\n...\n```
+    - ```py\n...\n```
+    - ```code\n...\n```
+    - ```\n...\n``` (no language identifier)
+    """
+    if not feedback or not isinstance(feedback, str):
+        return False
+    
+    # Match code blocks: ```python ... ```, ```py ... ```, ``` ... ```, etc.
+    # Pattern: ``` followed by optional language identifier (python/py/code), 
+    # optional whitespace, content (at least one char), then closing ```
+    # Uses non-greedy matching to find the shortest match
+    code_block_pattern = r'```(?:python|py|code)?\s*[\s\S]+?```'
+    return bool(re.search(code_block_pattern, feedback, re.IGNORECASE))
+
+
 # -------------------------------
 # Core scorer (single sample)
 # -------------------------------
@@ -376,6 +399,9 @@ def _score_one_sample(
     use_marginal_improvement: bool,
     fractional_shaping: bool,
     use_tci: bool,
+    timing_raw: Optional[Dict[str, float]] = None,
+    penalize_code_in_feedback: bool = False,
+    code_penalty: float = -1.0,
 ) -> Tuple[float, bool, Dict[str, Any]]:
     """
     Computes reward for a single sample with optional baseline/marginal logic.
@@ -389,6 +415,11 @@ def _score_one_sample(
     timeout_s = float(http_cfg.get("timeout_s", 600.0))
     max_retries = int(http_cfg.get("max_retries", 3))
     base_delay = float(http_cfg.get("base_delay", 2.0))
+
+    # Check for code blocks in feedback and apply penalty
+    has_code = False
+    if feedback and penalize_code_in_feedback:
+        has_code = _has_code_block(feedback)
 
     # Extract problem/attempts
     problem = (
@@ -417,14 +448,32 @@ def _score_one_sample(
         if baseline_passed is None:
             # Need to compute a baseline by calling solver w/o feedback
             prompt0 = build_solver_prompt(problem, use_solver_cot, None, prev_attempts)
-            text0 = _chat_with_retries(
-                base_url, model_name, prompt0, api_key, gen_cfg, max_retries, base_delay, timeout_s
-            )
+            if timing_raw is not None:
+                # wall-clock only
+                with marked_timer("reward_solver_generate", timing_raw):
+                    text0 = _chat_with_retries(
+                        base_url, model_name, prompt0, api_key, gen_cfg,
+                        max_retries, base_delay, timeout_s
+                    )
+            else:
+                text0 = _chat_with_retries(
+                    base_url, model_name, prompt0, api_key, gen_cfg,
+                    max_retries, base_delay, timeout_s
+                )
             if text0 is None:
                 return 0.0, False, {"error": "baseline HTTP call failed"}
             baseline_solver_output = text0
             baseline_code = _extract_code(text0)
-            baseline_passed, baseline_details = _eval_code(data_source, ground_truth, baseline_code, use_tci)
+            if timing_raw is not None:
+                # wall-clock only
+                with marked_timer("reward_verification", timing_raw):
+                    baseline_passed, baseline_details = _eval_code(
+                        data_source, ground_truth, baseline_code, use_tci
+                    )
+            else:
+                baseline_passed, baseline_details = _eval_code(
+                    data_source, ground_truth, baseline_code, use_tci
+                )
         # Reward is just binary baseline
         reward = 1.0 if baseline_passed else 0.0
         return reward, bool(baseline_passed), {
@@ -438,18 +487,39 @@ def _score_one_sample(
             "retry_solver_code": None,
             "retry_solver_output": None,
             "retry_solver_prompt": None,
+            "cm_contains_code": False,
+            "code_penalty_applied": 0.0,
         }
 
     # With feedback: compute retry
     retry_prompt = build_solver_prompt(problem, use_solver_cot, feedback, prev_attempts)
-    retry_text = _chat_with_retries(
-        base_url, model_name, retry_prompt, api_key, gen_cfg, max_retries, base_delay, timeout_s
-    )
+    if timing_raw is not None:
+        # wall-clock only
+        with marked_timer("reward_solver_generate", timing_raw):
+            retry_text = _chat_with_retries(
+                base_url, model_name, retry_prompt, api_key, gen_cfg,
+                max_retries, base_delay, timeout_s
+            )
+    else:
+        retry_text = _chat_with_retries(
+            base_url, model_name, retry_prompt, api_key, gen_cfg,
+            max_retries, base_delay, timeout_s
+        )
     if retry_text is None:
         return 0.0, False, {"error": "retry HTTP call failed"}
 
     retry_code = _extract_code(retry_text)
-    retry_passed, retry_details = _eval_code(data_source, ground_truth, retry_code, use_tci)
+    if timing_raw is not None:
+        # wall-clock only
+        with marked_timer("reward_verification", timing_raw):
+            retry_passed, retry_details = _eval_code(
+                data_source, ground_truth, retry_code, use_tci
+            )
+    else:
+        retry_passed, retry_details = _eval_code(
+            data_source, ground_truth, retry_code, use_tci
+        )
+
     reward_binary = 1.0 if retry_passed else 0.0
 
     # fractional shaping if available
@@ -463,12 +533,16 @@ def _score_one_sample(
         # Reward only if we matched or improved from baseline
         if retry_passed and not baseline_passed:
             final_reward = 1.0
-        elif retry_passed and baseline_passed:
-            final_reward = 1.0
         else:
             final_reward = 0.0
     else:
         final_reward = reward_shaped
+
+    # Apply penalty if CM output contains code blocks
+    code_penalty_applied = 0.0
+    if has_code and penalize_code_in_feedback:
+        final_reward = max(0.0, final_reward + code_penalty)
+        code_penalty_applied = code_penalty
 
     meta = {
         "initial_passed": baseline_passed,
@@ -481,9 +555,11 @@ def _score_one_sample(
         "retry_solver_code": retry_code,
         "retry_solver_output": retry_text,
         "retry_solver_prompt": retry_prompt,
+        "cm_contains_code": has_code,
+        "code_penalty_applied": code_penalty_applied,
     }
-    return float(final_reward), bool(retry_passed), meta
 
+    return float(final_reward), bool(retry_passed), meta
 
 # -------------------------------
 # PUBLIC: single-sample API (keeps old signature/semantics)
@@ -505,6 +581,8 @@ def rllm_reward_fn_context_assist(
       - use_marginal_improvement (bool)
       - fractional_shaping (bool)
       - use_together_code_interpreter (bool)
+      - penalize_code_in_feedback (bool): If True, penalize CM when feedback contains code blocks (default: True)
+      - code_penalty (float): Penalty value to apply if code is detected (default: -1.0)
     """
     cfg = RewardConfig()
     http_cfg = {
@@ -520,6 +598,8 @@ def rllm_reward_fn_context_assist(
     use_marginal = bool(kwargs.get("use_marginal_improvement", True))
     fractional = bool(kwargs.get("fractional_shaping", False))
     use_tci = bool(kwargs.get("use_together_code_interpreter", False))
+    penalize_code = bool(kwargs.get("penalize_code_in_feedback", False))
+    code_penalty = float(kwargs.get("code_penalty", 0.0))
 
     reward, is_correct, meta = _score_one_sample(
         data_source=data_source,
@@ -531,6 +611,9 @@ def rllm_reward_fn_context_assist(
         use_marginal_improvement=use_marginal,
         fractional_shaping=fractional,
         use_tci=use_tci,
+        timing_raw=kwargs.get("timing_raw", None),
+        penalize_code_in_feedback=penalize_code,
+        code_penalty=code_penalty,
     )
 
     # Preserve your old "incorrect_reward" behavior for single-sample if wanted
@@ -542,71 +625,3 @@ def rllm_reward_fn_context_assist(
         is_correct=bool(is_correct),
         metadata=meta,
     )
-
-
-# -------------------------------
-# PUBLIC: batch API (VERL PPO uses this)
-# -------------------------------
-def rllm_reward_fn_context_assist_batch(
-    data_sources: List[str],
-    solution_strs: List[str],      # <-- treat as feedback strings (actions)
-    ground_truths: List[Any],
-    extra_infos: List[Dict[str, Any]],
-    **kwargs,
-) -> List[float]:
-    """
-    Batch scorer compatible with VERL's reward_manager=batch.
-    kwargs:
-      - base_url, model_name, api_key
-      - gen (temperature, max_tokens / max_new_tokens)
-      - timeout_s, max_retries, base_delay, max_workers
-      - use_marginal_improvement (bool)
-      - fractional_shaping (bool)
-      - use_together_code_interpreter (bool)
-    """
-    http_cfg = {
-        "base_url": kwargs.get("base_url", kwargs.get("remote_url", "http://localhost:12345/v1")),
-        "model_name": kwargs.get("model_name", kwargs.get("solver_model_path", "genrm-demo")),
-        "api_key": kwargs.get("api_key", kwargs.get("remote_api_key", "EMPTY")),
-        "gen": kwargs.get("gen", {"max_tokens": 16384, "temperature": 0.0}),
-        "timeout_s": kwargs.get("timeout_s", 600.0),
-        "max_retries": kwargs.get("max_retries", 3),
-        "base_delay": kwargs.get("base_delay", 2.0),
-    }
-    max_workers = int(kwargs.get("max_workers", 32))
-    use_solver_cot = bool(kwargs.get("use_solver_cot", False))
-    use_marginal = bool(kwargs.get("use_marginal_improvement", True))
-    fractional = bool(kwargs.get("fractional_shaping", False))
-    use_tci = bool(kwargs.get("use_together_code_interpreter", False))
-
-    results = [0.0] * len(data_sources)
-
-    def _do(i: int) -> float:
-        ds = data_sources[i]
-        fb = solution_strs[i] if i < len(solution_strs) else ""
-        gt = ground_truths[i]
-        info = extra_infos[i] if i < len(extra_infos) else {}
-        reward, _, _ = _score_one_sample(
-            data_source=ds,
-            feedback=fb,
-            ground_truth=gt,
-            extra_info=info,
-            http_cfg=http_cfg,
-            use_solver_cot=use_solver_cot,
-            use_marginal_improvement=use_marginal,
-            fractional_shaping=fractional,
-            use_tci=use_tci,
-        )
-        return float(reward)
-
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        futs = {ex.submit(_do, i): i for i in range(len(data_sources))}
-        for fut in as_completed(futs):
-            i = futs[fut]
-            try:
-                results[i] = fut.result()
-            except Exception as e:
-                print(f"[cm_reward/batch] sample {i} failed: {e}")
-                results[i] = 0.0
-
-    return results

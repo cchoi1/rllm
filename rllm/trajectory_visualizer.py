@@ -1,14 +1,135 @@
 import json
 import re
+from typing import List
+from collections import defaultdict
+import hashlib
 
 import gradio as gr
 import torch
 from fire import Fire
 
 
-def main(trajectory_file: str = "./trajectories/DeepCoder-1.5B-Preview_context_manager_trajectories_10_20250916_141413.pt", server_port: int = 23457):
+def print_trajectory_completion_stats(trajectories: List, step_counts: List[int] = [1, 2, 4, 8]):
+    """
+    Print the number of trajectories successfully completed within specified step counts.
+    
+    Args:
+        trajectories: List of trajectory objects
+        step_counts: List of step counts to check (default: [1, 2, 4])
+    """
+    print(f"\n📊 Trajectory Completion Statistics")
+    print(f"{'='*50}")
+    
+    total_trajectories = len(trajectories)
+    print(f"Total trajectories: {total_trajectories}")
+    
+    for step_count in step_counts:
+        completed_count = 0
+        for traj in trajectories:
+            # Check if trajectory is completed successfully within step limit
+            if (len(traj.steps) > 0 and 
+                len(traj.steps) <= step_count and 
+                getattr(traj.steps[-1], 'done', False) and
+                float(traj.reward) > 0.0):  # Only count as successful if reward > 0
+                completed_count += 1
+        
+        percentage = (completed_count / total_trajectories * 100) if total_trajectories > 0 else 0
+        print(f"Completed within {step_count} step{'s' if step_count != 1 else ''}: {completed_count}/{total_trajectories} ({percentage:.1f}%)")
+    
+    print(f"{'='*50}\n")
+
+
+def print_pass_at_k_stats(trajectories: List, max_k: int = None):
+    """
+    Calculate and print pass@1, pass@2, ... pass@K statistics for trajectories.
+    
+    Args:
+        trajectories: List of trajectory objects
+        max_k: Maximum K to calculate pass@K for. If None, will be determined from the data.
+    """
+    print(f"\n📈 Pass@K Statistics")
+    print(f"{'='*50}")
+    
+    if not trajectories:
+        print("No trajectories provided.")
+        return
+    
+    # Group trajectories by problem (using task hash)
+    problem_groups = defaultdict(list)
+    
+    for trajectory in trajectories:
+        task = trajectory.task
+        
+        # Generate hash of problem dict/string
+        if isinstance(task, dict):
+            problem_str = json.dumps(task, sort_keys=True)
+        else:
+            problem_str = str(task)
+        problem_hash = hashlib.md5(problem_str.encode()).hexdigest()
+        
+        # Determine if this trajectory is successful (reward > 0)
+        is_successful = float(trajectory.reward) > 0.0
+        problem_groups[problem_hash].append(is_successful)
+    
+    # Calculate pass@K for each K
+    total_problems = len(problem_groups)
+    if total_problems == 0:
+        print("No problems found in trajectories.")
+        return
+    
+    # Determine max_k if not provided
+    if max_k is None:
+        max_k = max(len(attempts) for attempts in problem_groups.values())
+    
+    print(f"Total unique problems: {total_problems}")
+    print(f"Maximum attempts per problem: {max_k}")
+    print()
+    
+    # Calculate pass@K for each K from 1 to max_k
+    for k in range(1, max_k + 1):
+        passed_problems = 0
+        
+        for problem_hash, attempts in problem_groups.items():
+            # For pass@k, we need at least k attempts and at least one success in the first k attempts
+            if len(attempts) >= k:
+                # Check if any of the first k attempts succeeded
+                if any(attempts[:k]):
+                    passed_problems += 1
+        
+        # Calculate pass@k rate
+        problems_with_k_attempts = sum(1 for attempts in problem_groups.values() if len(attempts) >= k)
+        if problems_with_k_attempts > 0:
+            pass_at_k_rate = passed_problems / problems_with_k_attempts
+            print(f"Pass@{k}: {passed_problems}/{problems_with_k_attempts} ({pass_at_k_rate:.3f})")
+        else:
+            print(f"Pass@{k}: N/A (no problems with {k} attempts)")
+    
+    # Also calculate average pass@1 (overall success rate)
+    total_attempts = sum(len(attempts) for attempts in problem_groups.values())
+    total_successes = sum(sum(attempts) for attempts in problem_groups.values())
+    if total_attempts > 0:
+        avg_pass_at_1 = total_successes / total_attempts
+        print(f"\nAverage Pass@1 (overall success rate): {total_successes}/{total_attempts} ({avg_pass_at_1:.3f})")
+    
+    print(f"{'='*50}\n")
+
+
+def main(trajectory_file: str = "./trajectories/step50_multiturn.pt", 
+         server_port: int = 23457, 
+         step_counts: List[int] = [1, 2, 4],
+         print_stats: bool = True,
+         print_pass_at_k: bool = True,
+         max_k: int = None):
     trajs_data = torch.load(trajectory_file, weights_only=False)
     all_trajs = list(filter(lambda x: hasattr(x, "steps") and len(x.steps) > 0, trajs_data))
+    
+    # Print trajectory completion statistics if requested
+    if print_stats:
+        print_trajectory_completion_stats(all_trajs, step_counts)
+    
+    # Print pass@K statistics if requested
+    if print_pass_at_k:
+        print_pass_at_k_stats(all_trajs, max_k)
 
     def filter_trajectories_by_reward(filter_option: str):
         """Filter trajectories based on reward"""

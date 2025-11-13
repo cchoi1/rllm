@@ -8,17 +8,23 @@
     "test": "/nlp/scr/cchoi1/rllm/rllm/data/datasets/lcb/test.parquet"
   },
   "deepscaler_math": {
-    "train": "/nlp/scr/cchoi1/rllm/rllm/data/datasets/deepscaler_math/train.parquet"
+    "train": "/juice2/scr2/cchoi1/rllm/rllm/data/datasets/deepscaler_math/train.parquet"
   },
   "aime2024": {
-    "test": "/nlp/scr/cchoi1/rllm/rllm/data/datasets/aime2024/test.parquet"
-  },
-  "deepcoder_chunked2": {
-    "train": "/juice2/scr2/cchoi1/rllm/rllm/data/datasets/deepcoder_chunked2/train_chunks_metadata.json",
-    "test": "/juice2/scr2/cchoi1/rllm/rllm/data/datasets/deepcoder_chunked2/test_chunks_metadata.json"
+    "test": "/juice2/scr2/cchoi1/rllm/rllm/data/datasets/aime2024/test.parquet"
   },
   "deepcoder_chunked": {
     "train": "/juice2/scr2/cchoi1/rllm/rllm/data/datasets/deepcoder_chunked/train.parquet",
     "test": "/juice2/scr2/cchoi1/rllm/rllm/data/datasets/deepcoder_chunked/test.parquet"
+  },
+  "countdown": {
+    "train": "/juice2/scr2/cchoi1/rllm/rllm/data/datasets/countdown/train.parquet",
+    "test": "/juice2/scr2/cchoi1/rllm/rllm/data/datasets/countdown/test.parquet",
+    "stage2_train": "/juice2/scr2/cchoi1/rllm/rllm/data/datasets/countdown/stage2_train.parquet",
+    "stage3_train": "/juice2/scr2/cchoi1/rllm/rllm/data/datasets/countdown/stage3_train.parquet"
+  },
+  "miniwob": {
+    "train": "/juice2/scr2/cchoi1/rllm/rllm/data/datasets/miniwob/train.parquet",
+    "test": "/juice2/scr2/cchoi1/rllm/rllm/data/datasets/miniwob/test.parquet"
   }
 }

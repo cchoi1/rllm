@@ -72,8 +72,8 @@ class CompetitionCodingEnv(MultiTurnEnvironment):
         self.current_turn += 1
 
         # Check if we've reached the maximum number of turns
-        # if self.current_turn >= self.max_turns or reward == 1:
-        if self.current_turn >= self.max_turns:
+        if self.current_turn >= self.max_turns or reward == 1:
+        # if self.current_turn >= self.max_turns:
             self.done = True
             return {}, reward, self.done, self.task
 

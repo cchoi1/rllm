@@ -80,6 +80,8 @@ class OpenAIEngine(RolloutEngine):
                 completion_length = response.usage.completion_tokens
                 finish_reason = response.choices[0].finish_reason
 
+                print(f"\n\nContent: {content}")
+
                 return ModelOutput(
                     text=text,
                     content=content,

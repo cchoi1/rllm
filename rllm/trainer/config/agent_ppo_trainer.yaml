@@ -27,7 +27,40 @@ rllm:
     engine_args: {}
   env:
     name: custom
-    env_args: {}
+    env_args:
+      # ---- Remote solver defaults; can be overridden via CLI or env ----
+      solver_remote:
+        base_url: ${oc.env:SGLANG_BASE_URL,"http://localhost:12345/v1"}
+        api_key: ${oc.env:VLLM_API_KEY,""}
+        model: agentica-org/DeepCoder-1.5B-Preview
+        temperature: 0.0
+        max_tokens: 16384
+        top_p: 0.95
+        top_k: -1
+        max_retries: 3
+        base_delay_s: 1.0
+        extra_headers: {}
+
+      # ---- Reward config; define 'gen' up front to avoid struct insertion ----
+      reward_kwargs:
+        remote_url: ${rllm.env.env_args.solver_remote.base_url}
+        remote_api_key: ${rllm.env.env_args.solver_remote.api_key}
+        solver_model_path: ${rllm.env.env_args.solver_remote.model}
+        timeout_s: 600.0
+        max_retries: 3
+        base_delay: 2.0
+        use_solver_cot: false
+        use_marginal_improvement: true
+        fractional_shaping: false
+        use_together_code_interpreter: false
+        gen:
+          temperature: ${rllm.env.env_args.solver_remote.temperature}
+          max_tokens: ${rllm.env.env_args.solver_remote.max_tokens}
+          max_new_tokens: ${rllm.env.env_args.solver_remote.max_tokens}
+          top_p: ${rllm.env.env_args.solver_remote.top_p}
+          top_k: ${rllm.env.env_args.solver_remote.top_k}
+          do_sample: true
+          n: 1
   workflow:
     use_workflow: False
     name: single_turn_workflow
@@ -65,3 +98,12 @@ fireworks:
   deployment_id: null
   model_id_prefix: test-model
   concurrency: 32
+
+algorithm:
+  # (keep your existing PPO settings here too)
+  rollout_is: false                    # turn the reweighting on/off
+  rollout_is_level: sequence          # sequence | token
+  rollout_is_mode: truncate           # truncate | clip | none  (your helper expects "truncate")
+  rollout_is_threshold: 2.0          # upper cap on IS weight
+  rollout_is_threshold_lower: null    # if null => defaults to 1/upper
+  rollout_is_veto_threshold: null   # drop sample if weight < this (set null to disable)

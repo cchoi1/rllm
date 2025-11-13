@@ -3,14 +3,14 @@
 #SBATCH --account=tiger
 #SBATCH --time=120:00:00
 #SBATCH --nodes=1
-#SBATCH --gres=gpu:8
+#SBATCH --gres=gpu:4
 #SBATCH --mem=256GB
 #SBATCH --cpus-per-task=48
 #SBATCH --job-name="deepcoder_solver"
 #SBATCH --output=deepcoder_solver.log
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=cchoi1@stanford.edu
-#SBATCH --exclude=tiger[1-5]
+#SBATCH --exclude=tiger[1-6],tiger-hgx-1
 
 source /nlp/scr/cchoi1/miniconda3/etc/profile.d/conda.sh
 conda activate rllm
@@ -61,7 +61,7 @@ echo "RAY_TMPDIR=$RAY_TMPDIR  RAY_NAMESPACE=$RAY_NAMESPACE"
 # Config
 # ==========================
 MODEL="agentica-org/DeepCoder-1.5B-Preview"
-NUM_GPUS=8
+NUM_GPUS=4
 HOST="0.0.0.0"
 PORT=12345
 
@@ -84,6 +84,10 @@ export CUDA_VISIBLE_DEVICES=$(seq -s, 0 $((NUM_GPUS-1)))
 python -m sglang.launch_server \
   --model-path "$MODEL" \
   --dp-size "$NUM_GPUS" \
+  --mem-fraction-static 0.88 \
+  --max-prefill-tokens 16384 \
+  --chunked-prefill-size 4096 \
+  --enable-metrics \
   --host "$HOST" \
   --port "$PORT" \
   2>&1 | tee -a "$LOG" &
@@ -107,7 +111,7 @@ for i in {1..30}; do
     break
   fi
   echo "Not ready yet... (${i}/30). Sleeping 10s."
-  sleep 10
+  sleep 20
 done
 
 if [[ "$READY" -ne 1 ]]; then

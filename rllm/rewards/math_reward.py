@@ -23,8 +23,9 @@ class RewardMathFn:
     the reward based on the correctness of the provided answer compared to the ground truth.
     """
 
-    def __init__(self, config: RewardConfig):
+    def __init__(self, config: RewardConfig, return_answers: bool = False):
         self.config = config
+        self.return_answers = return_answers
 
     def __call__(self, task_info: dict, action: str) -> RewardOutput:
         """
@@ -41,27 +42,31 @@ class RewardMathFn:
         # problem = task_info.get("problem", "")
         model_response = action
 
+        answers = {}
+        if self.return_answers:
+            answers = {"model_answer": model_answer, "ground_truths": ground_truths}
+
         # Handle None or empty response
         if model_response is None or model_response == "":
             print("DEBUG: Empty or None response")
-            return RewardOutput(reward=self.config.format_error_reward, is_correct=False)
+            return RewardOutput(reward=self.config.format_error_reward, is_correct=False, metadata=answers)
 
         # Extract solution.
         if THOUGHT_DELIMITER_END in model_response:
             model_solution = model_response.split(THOUGHT_DELIMITER_END)[1]
         else:
             if self.config.apply_format_reward:
-                return RewardOutput(reward=self.config.format_error_reward, is_correct=False)
+                return RewardOutput(reward=self.config.format_error_reward, is_correct=False, metadata=answers)
             model_solution = model_response
 
         model_answer = extract_answer(model_solution)
         if model_answer is None:
-            return RewardOutput(reward=self.config.format_error_reward, is_correct=False)
+            return RewardOutput(reward=self.config.format_error_reward, is_correct=False, metadata=answers)
 
         # Process the ground truth(s)
         ground_truths = task_info.get("ground_truth", None)
         if ground_truths is None:
-            return RewardOutput(reward=self.config.unk_error_reward, is_correct=False)
+            return RewardOutput(reward=self.config.unk_error_reward, is_correct=False, metadata=answers)
 
         # Convert single answer to list for uniform processing
         if isinstance(ground_truths, str | float | int):
@@ -79,7 +84,7 @@ class RewardMathFn:
                 processed_ground_truths.append(truth)
 
         if not processed_ground_truths:
-            return RewardOutput(reward=self.config.unk_error_reward, is_correct=False)
+            return RewardOutput(reward=self.config.unk_error_reward, is_correct=False, metadata=answers)
 
         # Check against all possible correct answers
         for ground_truth in processed_ground_truths:
@@ -91,7 +96,7 @@ class RewardMathFn:
                     reward += self.config.toolcall_bonus
                 return RewardOutput(reward=reward, is_correct=True)
 
-        return RewardOutput(reward=self.config.incorrect_reward, is_correct=False)
+        return RewardOutput(reward=self.config.incorrect_reward, is_correct=False, metadata=answers)
 
 
 def rllm_reward_fn_math(data_source: str, llm_solution: str, ground_truth: str | list[str], extra_info=None, **kwargs):

@@ -62,8 +62,11 @@ class AgentTrainer:
 
         if train_dataset is not None and self.config is not None and hasattr(self.config, "data"):
             self.config.data.train_files = train_dataset.get_verl_data_path()
+            print(f"[AgentTrainer] train_files: {self.config.data.train_files}")
         if val_dataset is not None and self.config is not None and hasattr(self.config, "data"):
             self.config.data.val_files = val_dataset.get_verl_data_path()
+            print(f"[AgentTrainer] val_files: {self.config.data.val_files}")
+
 
     def train(self):
         # Check if Ray is not initialized

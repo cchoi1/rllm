@@ -4,8 +4,15 @@ export VLLM_ATTENTION_BACKEND=FLASH_ATTN
 export PYTORCH_CUDA_ALLOC_CONF="expandable_segments:False"
 export VLLM_USE_V1=1
 export VLLM_ALLOW_LONG_MAX_MODEL_LEN=1
-export VLLM_ENGINE_ITERATION_TIMEOUT_S=100000000000
-export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
+export VLLM_ENGINE_ITERATION_TIMEOUT_S=1000000000
+export CUDA_DEVICE_ORDER=PCI_BUS_ID
+export HYDRA_FULL_ERROR=1
+export RAY_DISABLE_DASHBOARD=1
+export CUDA_VISIBLE_DEVICES=0,1,2,3
+
+unset ROCR_VISIBLE_DEVICES
+unset HIP_VISIBLE_DEVICES
+
 python3 -m examples.countdown.train_countdown \
     data.train_batch_size=64 \
     data.max_prompt_length=2048 \
@@ -53,7 +60,7 @@ python3 -m examples.countdown.train_countdown \
     trainer.project_name='rllm-agent' \
     trainer.experiment_name='countdown' \
     trainer.val_before_train=True \
-    trainer.n_gpus_per_node=8 \
+    trainer.n_gpus_per_node=4 \
     trainer.nnodes=1 \
     trainer.save_freq=1000 \
     trainer.test_freq=10 \
